@@ -8,6 +8,22 @@ pub enum Token {
     EOF,
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub enum TokenKind {
+    Lambda,
+    Dot,
+    LParen,
+    RParen,
+    Ident(String),
+    EOF,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct TokenSpan {
+    pub kind: TokenKind,
+    pub pos: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LexError {
     InvalidChar { ch: char, pos: usize },

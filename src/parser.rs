@@ -17,6 +17,19 @@ pub enum Term {
     Var(String),
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub enum ParseError {
+    UnexpectedToken {
+        expected: &'static str,
+        found: Token,
+    },
+    UnexpectedEof {
+        expected: &'static str,
+    },
+    MissingRParen,
+    MissingDot,
+}
+
 impl Display for Term {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
