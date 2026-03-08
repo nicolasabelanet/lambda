@@ -344,4 +344,9 @@ mod tests {
         assert_eq!(lex.next_token().unwrap().kind, TokenKind::EOF);
         assert_eq!(lex.next_token().unwrap().kind, TokenKind::EOF);
     }
+
+    #[test]
+    fn test_invalid_char() {
+        assert!(lex("@").is_err());
+    }
 }
