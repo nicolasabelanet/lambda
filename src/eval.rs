@@ -1,13 +1,32 @@
 use std::collections::HashSet;
 
 use crate::{
-    lexer::lex,
-    parser::{Term, parse},
+    lexer::{lex, LexError},
+    parser::{parse, ParseError, Term},
 };
 
-pub fn evaluate(input: &str) -> Term {
-    let ast = parse(lex(input));
-    normalize(&ast)
+#[derive(Debug)]
+pub enum EvalError {
+    Lex(LexError),
+    Parse(ParseError),
+}
+
+impl From<LexError> for EvalError {
+    fn from(err: LexError) -> Self {
+        EvalError::Lex(err)
+    }
+}
+
+impl From<ParseError> for EvalError {
+    fn from(err: ParseError) -> Self {
+        EvalError::Parse(err)
+    }
+}
+
+pub fn evaluate(input: &str) -> Result<Term, EvalError> {
+    let tokens = lex(input)?;
+    let ast = parse(tokens)?;
+    Ok(normalize(&ast))
 }
 
 pub fn normalize(term: &Term) -> Term {
@@ -151,11 +170,11 @@ mod tests {
     use crate::{
         eval::{create_fresh_name, free_vars, normalize, rename, step, substitute, update_lambda},
         lexer::lex,
-        parser::{Term, parse},
+        parser::{parse, Term},
     };
 
     fn ast(input: &str) -> Term {
-        parse(lex(input))
+        parse(lex(input).unwrap()).unwrap()
     }
 
     mod test_normalize {

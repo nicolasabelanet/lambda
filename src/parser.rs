@@ -8,7 +8,7 @@ atom        := IDENT | LPAREN term RPAREN
 
 use std::fmt::{Debug, Display};
 
-use crate::lexer::Token;
+use crate::lexer::{TokenKind, TokenSpan};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Term {
@@ -21,13 +21,29 @@ pub enum Term {
 pub enum ParseError {
     UnexpectedToken {
         expected: &'static str,
-        found: Token,
+        found: TokenSpan,
     },
     UnexpectedEof {
         expected: &'static str,
+        pos: usize,
     },
-    MissingRParen,
-    MissingDot,
+}
+
+impl Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParseError::UnexpectedToken { expected, found } => {
+                write!(
+                    f,
+                    "unexpected token at {}..{} (expected {expected})",
+                    found.start, found.end
+                )
+            }
+            ParseError::UnexpectedEof { expected, pos } => {
+                write!(f, "unexpected end of input at {pos} (expected {expected})")
+            }
+        }
+    }
 }
 
 impl Display for Term {
@@ -58,20 +74,20 @@ impl Display for Term {
 
 struct Parser {
     pos: usize,
-    input: Vec<Token>,
+    input: Vec<TokenSpan>,
 }
 
 impl Parser {
-    fn new(input: Vec<Token>) -> Parser {
+    fn new(input: Vec<TokenSpan>) -> Parser {
         Parser { pos: 0, input }
     }
 
-    fn peek(&self) -> Option<Token> {
+    fn peek(&self) -> Option<&TokenSpan> {
         if self.pos >= self.input.len() {
             return None;
         }
 
-        self.input.get(self.pos).cloned()
+        self.input.get(self.pos)
     }
 
     fn advance(&mut self) {
@@ -80,91 +96,188 @@ impl Parser {
         }
     }
 
-    fn parse_atom(&mut self) -> Term {
-        match self.peek() {
-            Some(Token::Ident(name)) => {
-                self.advance();
-                Term::Var(name)
+    fn eof_pos(&self) -> usize {
+        self.input.last().map(|token| token.end).unwrap_or(0)
+    }
+
+    fn parse_atom(&mut self) -> Result<Term, ParseError> {
+        let token = match self.peek() {
+            Some(token) => token,
+            None => {
+                return Err(ParseError::UnexpectedEof {
+                    expected: "identifier or '('",
+                    pos: self.eof_pos(),
+                })
             }
-            Some(Token::LParen) => {
+        };
+
+        match &token.kind {
+            TokenKind::Ident(name) => {
+                let name = name.clone();
                 self.advance();
-                let term = self.parse_term();
-                let rparen = self.peek();
-                assert!(matches!(rparen, Some(Token::RParen)));
-                self.advance();
-                term
+                Ok(Term::Var(name))
             }
-            _ => panic!(),
+            TokenKind::LParen => {
+                self.advance();
+                let term = self.parse_term()?;
+                match self.peek() {
+                    Some(TokenSpan {
+                        kind: TokenKind::RParen,
+                        ..
+                    }) => {
+                        self.advance();
+                        Ok(term)
+                    }
+                    Some(found) => Err(ParseError::UnexpectedToken {
+                        expected: "')'",
+                        found: found.clone(),
+                    }),
+                    None => Err(ParseError::UnexpectedEof {
+                        expected: "')'",
+                        pos: self.eof_pos(),
+                    }),
+                }
+            }
+            _ => Err(ParseError::UnexpectedToken {
+                expected: "identifier or '('",
+                found: token.clone(),
+            }),
         }
     }
 
     fn is_next_token_atom(&self) -> bool {
-        matches!(self.peek(), Some(Token::LParen) | Some(Token::Ident(_)))
+        matches!(
+            self.peek(),
+            Some(TokenSpan {
+                kind: TokenKind::LParen,
+                ..
+            }) | Some(TokenSpan {
+                kind: TokenKind::Ident(_),
+                ..
+            })
+        )
     }
 
-    fn parse_application(&mut self) -> Term {
-        let mut left = self.parse_atom();
+    fn parse_application(&mut self) -> Result<Term, ParseError> {
+        let mut left = self.parse_atom()?;
 
         if !self.is_next_token_atom() {
-            return left;
+            return Ok(left);
         }
-
-        let mut right = self.parse_atom();
-
-        let mut app = Term::Application(Box::new(left), Box::new(right));
 
         while self.is_next_token_atom() {
-            left = app;
-            right = self.parse_atom();
-            app = Term::Application(Box::new(left), Box::new(right))
+            let right = self.parse_atom()?;
+            left = Term::Application(Box::new(left), Box::new(right));
         }
 
-        app
+        Ok(left)
     }
 
-    fn parse_lambda(&mut self) -> Term {
-        let lambda = self.peek();
-        assert!(matches!(lambda, Some(Token::Lambda)));
-        self.advance();
-
-        let identifier = self.peek().unwrap();
-        self.advance();
-
-        let dot = self.peek();
-        assert!(matches!(dot, Some(Token::Dot)));
-        self.advance();
-
-        let body = self.parse_term();
-
-        if let Token::Ident(name) = identifier {
-            return Term::Lambda(name, Box::new(body));
-        };
-        panic!()
-    }
-
-    fn parse_term(&mut self) -> Term {
+    fn parse_lambda(&mut self) -> Result<Term, ParseError> {
         match self.peek() {
-            Some(Token::Lambda) => self.parse_lambda(),
+            Some(TokenSpan {
+                kind: TokenKind::Lambda,
+                ..
+            }) => self.advance(),
+            Some(found) => {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "lambda",
+                    found: found.clone(),
+                })
+            }
+            None => {
+                return Err(ParseError::UnexpectedEof {
+                    expected: "lambda",
+                    pos: self.eof_pos(),
+                })
+            }
+        }
+
+        let identifier = match self.peek() {
+            Some(TokenSpan {
+                kind: TokenKind::Ident(name),
+                ..
+            }) => {
+                let name = name.clone();
+                self.advance();
+                name
+            }
+            Some(found) => {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "identifier",
+                    found: found.clone(),
+                })
+            }
+            None => {
+                return Err(ParseError::UnexpectedEof {
+                    expected: "identifier",
+                    pos: self.eof_pos(),
+                })
+            }
+        };
+
+        match self.peek() {
+            Some(TokenSpan {
+                kind: TokenKind::Dot,
+                ..
+            }) => self.advance(),
+            Some(found) => {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "'.'",
+                    found: found.clone(),
+                })
+            }
+            None => {
+                return Err(ParseError::UnexpectedEof {
+                    expected: "'.'",
+                    pos: self.eof_pos(),
+                })
+            }
+        }
+
+        let body = self.parse_term()?;
+
+        Ok(Term::Lambda(identifier, Box::new(body)))
+    }
+
+    fn parse_term(&mut self) -> Result<Term, ParseError> {
+        match self.peek() {
+            Some(TokenSpan {
+                kind: TokenKind::Lambda,
+                ..
+            }) => self.parse_lambda(),
             _ => self.parse_application(),
         }
     }
 }
 
-pub fn parse(input: Vec<Token>) -> Term {
+pub fn parse(input: Vec<TokenSpan>) -> Result<Term, ParseError> {
     let mut parser = Parser::new(input);
-    parser.parse_term()
+    let term = parser.parse_term()?;
+
+    match parser.peek() {
+        Some(TokenSpan {
+            kind: TokenKind::EOF,
+            ..
+        }) => Ok(term),
+        Some(found) => Err(ParseError::UnexpectedToken {
+            expected: "end of input",
+            found: found.clone(),
+        }),
+        None => Ok(term),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
         lexer::lex,
-        parser::{Term, parse},
+        parser::{parse, Term},
     };
 
     fn lex_and_parse(input: &str) -> Term {
-        let tokens = lex(input);
-        parse(tokens)
+        let tokens = lex(input).unwrap();
+        parse(tokens).unwrap()
     }
 
     fn assert_roundtrip(term: Term) {

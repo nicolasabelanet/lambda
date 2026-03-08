@@ -31,9 +31,9 @@ pub enum LexError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Span {
-    start: usize,
-    end: usize,
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
 }
 
 struct Lexer {

@@ -18,8 +18,10 @@ pub fn repl() {
 
                 rl.add_history_entry(input).ok();
 
-                let result = evaluate(input);
-                println!("{result}");
+                match evaluate(input) {
+                    Ok(result) => println!("{result}"),
+                    Err(err) => eprintln!("error: {err:?}"),
+                }
             }
             Err(rustyline::error::ReadlineError::Interrupted) => {
                 break;
