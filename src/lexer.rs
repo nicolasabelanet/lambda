@@ -30,6 +30,20 @@ pub enum LexError {
     InvalidChar { ch: char, span: Span },
 }
 
+impl LexError {
+    pub fn span(&self) -> Span {
+        match self {
+            LexError::InvalidChar { span, .. } => span.clone(),
+        }
+    }
+
+    pub fn message(&self) -> String {
+        match self {
+            LexError::InvalidChar { ch, .. } => format!("invalid character '{ch}'"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Span {
     pub start: usize,
@@ -110,7 +124,7 @@ impl Lexer {
                 ch: c,
                 span: Span {
                     start,
-                    end: self.pos,
+                    end: self.pos + 1,
                 },
             }),
             None => Ok(TokenSpan {

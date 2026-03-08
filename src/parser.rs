@@ -27,20 +27,56 @@ pub enum ParseError {
         expected: &'static str,
         pos: usize,
     },
+    MissingToken {
+        expected: &'static str,
+        pos: usize,
+    },
 }
 
 impl Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ParseError::UnexpectedToken { expected, found } => {
-                write!(
-                    f,
-                    "unexpected token at {}..{} (expected {expected})",
-                    found.start, found.end
-                )
+            ParseError::UnexpectedToken { expected, found: _ } => {
+                write!(f, "unexpected token (expected {expected})")
             }
-            ParseError::UnexpectedEof { expected, pos } => {
-                write!(f, "unexpected end of input at {pos} (expected {expected})")
+            ParseError::UnexpectedEof { expected, pos: _ } => {
+                write!(f, "unexpected end of input (expected {expected})")
+            }
+            ParseError::MissingToken { expected, pos: _ } => {
+                write!(f, "expected {expected}")
+            }
+        }
+    }
+}
+
+impl ParseError {
+    pub fn span(&self) -> crate::lexer::Span {
+        match self {
+            ParseError::UnexpectedToken { found, .. } => crate::lexer::Span {
+                start: found.start,
+                end: found.end,
+            },
+            ParseError::UnexpectedEof { pos, .. } => crate::lexer::Span {
+                start: *pos,
+                end: *pos,
+            },
+            ParseError::MissingToken { pos, .. } => crate::lexer::Span {
+                start: *pos,
+                end: *pos,
+            },
+        }
+    }
+
+    pub fn message(&self) -> String {
+        match self {
+            ParseError::UnexpectedToken { expected, .. } => {
+                format!("expected {expected}")
+            }
+            ParseError::UnexpectedEof { expected, .. } => {
+                format!("unexpected end of input (expected {expected})")
+            }
+            ParseError::MissingToken { expected, .. } => {
+                format!("expected {expected}")
             }
         }
     }
@@ -104,8 +140,8 @@ impl Parser {
         let token = match self.peek() {
             Some(token) => token,
             None => {
-                return Err(ParseError::UnexpectedEof {
-                    expected: "identifier or '('",
+                return Err(ParseError::MissingToken {
+                    expected: "term",
                     pos: self.eof_pos(),
                 })
             }
@@ -128,18 +164,18 @@ impl Parser {
                         self.advance();
                         Ok(term)
                     }
-                    Some(found) => Err(ParseError::UnexpectedToken {
+                    Some(found) => Err(ParseError::MissingToken {
                         expected: "')'",
-                        found: found.clone(),
+                        pos: found.start,
                     }),
-                    None => Err(ParseError::UnexpectedEof {
+                    None => Err(ParseError::MissingToken {
                         expected: "')'",
                         pos: self.eof_pos(),
                     }),
                 }
             }
             _ => Err(ParseError::UnexpectedToken {
-                expected: "identifier or '('",
+                expected: "term",
                 found: token.clone(),
             }),
         }
@@ -203,13 +239,13 @@ impl Parser {
                 name
             }
             Some(found) => {
-                return Err(ParseError::UnexpectedToken {
+                return Err(ParseError::MissingToken {
                     expected: "identifier",
-                    found: found.clone(),
+                    pos: found.start,
                 })
             }
             None => {
-                return Err(ParseError::UnexpectedEof {
+                return Err(ParseError::MissingToken {
                     expected: "identifier",
                     pos: self.eof_pos(),
                 })
@@ -222,13 +258,13 @@ impl Parser {
                 ..
             }) => self.advance(),
             Some(found) => {
-                return Err(ParseError::UnexpectedToken {
+                return Err(ParseError::MissingToken {
                     expected: "'.'",
-                    found: found.clone(),
+                    pos: found.start,
                 })
             }
             None => {
-                return Err(ParseError::UnexpectedEof {
+                return Err(ParseError::MissingToken {
                     expected: "'.'",
                     pos: self.eof_pos(),
                 })

@@ -1,6 +1,9 @@
 use rustyline::DefaultEditor;
 
-use crate::eval::evaluate;
+use crate::{
+    diagnostic::format_span_error,
+    eval::{evaluate, EvalError},
+};
 
 pub fn repl() {
     let mut rl = DefaultEditor::new().unwrap();
@@ -20,7 +23,7 @@ pub fn repl() {
 
                 match evaluate(input) {
                     Ok(result) => println!("{result}"),
-                    Err(err) => eprintln!("error: {err:?}"),
+                    Err(err) => print_error(input, err),
                 }
             }
             Err(rustyline::error::ReadlineError::Interrupted) => {
@@ -33,6 +36,21 @@ pub fn repl() {
                 eprintln!("error: {err}");
                 break;
             }
+        }
+    }
+}
+
+fn print_error(source: &str, err: EvalError) {
+    match err {
+        EvalError::Lex(err) => {
+            let message = err.message();
+            let span = err.span();
+            eprintln!("{}", format_span_error(source, &message, span));
+        }
+        EvalError::Parse(err) => {
+            let message = err.message();
+            let span = err.span();
+            eprintln!("{}", format_span_error(source, &message, span));
         }
     }
 }
