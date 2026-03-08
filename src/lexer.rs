@@ -361,6 +361,9 @@ mod tests {
 
     #[test]
     fn test_invalid_char() {
-        assert!(lex("@").is_err());
+        let err = lex("@").unwrap_err();
+        assert_eq!(err.message(), "invalid character '@'");
+        assert_eq!(err.span().start, 0);
+        assert_eq!(err.span().end, 1);
     }
 }

@@ -40,3 +40,22 @@ fn line_info(source: &str, pos: usize) -> (usize, usize, String) {
         last_line.to_string(),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{diagnostic::format_span_error, lexer::Span};
+
+    #[test]
+    fn test_format_span_error_end_of_line() {
+        let output = format_span_error("\\x", "expected '.'", Span { start: 2, end: 2 });
+        let expected = "error: expected '.'\n --> line 1, col 3\n  |\n1 | \\x\n  |   ^";
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn test_format_span_error_range() {
+        let output = format_span_error("abc", "expected term", Span { start: 1, end: 3 });
+        let expected = "error: expected term\n --> line 1, col 2\n  |\n1 | abc\n  |  ^^";
+        assert_eq!(output, expected);
+    }
+}

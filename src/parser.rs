@@ -143,7 +143,7 @@ impl Parser {
                 return Err(ParseError::MissingToken {
                     expected: "term",
                     pos: self.eof_pos(),
-                })
+                });
             }
         };
 
@@ -174,6 +174,10 @@ impl Parser {
                     }),
                 }
             }
+            TokenKind::EOF => Err(ParseError::MissingToken {
+                expected: "term",
+                pos: token.start,
+            }),
             _ => Err(ParseError::UnexpectedToken {
                 expected: "term",
                 found: token.clone(),
@@ -219,13 +223,13 @@ impl Parser {
                 return Err(ParseError::UnexpectedToken {
                     expected: "lambda",
                     found: found.clone(),
-                })
+                });
             }
             None => {
                 return Err(ParseError::UnexpectedEof {
                     expected: "lambda",
                     pos: self.eof_pos(),
-                })
+                });
             }
         }
 
@@ -242,13 +246,13 @@ impl Parser {
                 return Err(ParseError::MissingToken {
                     expected: "identifier",
                     pos: found.start,
-                })
+                });
             }
             None => {
                 return Err(ParseError::MissingToken {
                     expected: "identifier",
                     pos: self.eof_pos(),
-                })
+                });
             }
         };
 
@@ -261,13 +265,13 @@ impl Parser {
                 return Err(ParseError::MissingToken {
                     expected: "'.'",
                     pos: found.start,
-                })
+                });
             }
             None => {
                 return Err(ParseError::MissingToken {
                     expected: "'.'",
                     pos: self.eof_pos(),
-                })
+                });
             }
         }
 
@@ -307,8 +311,8 @@ pub fn parse(input: Vec<TokenSpan>) -> Result<Term, ParseError> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        lexer::lex,
-        parser::{parse, Term},
+        lexer::{Span, TokenSpan, lex},
+        parser::{ParseError, Term, parse},
     };
 
     fn lex_and_parse(input: &str) -> Term {
@@ -461,5 +465,63 @@ mod tests {
                 )),
             )
         );
+    }
+
+    #[test]
+    fn test_parse_errors_missing_dot() {
+        let tokens = lex("\\x").unwrap();
+        let err = parse(tokens).unwrap_err();
+
+        assert!(matches!(
+            err,
+            ParseError::MissingToken {
+                expected: "'.'",
+                pos: 2usize
+            }
+        ))
+    }
+
+    #[test]
+    fn test_parse_errors_missing_rparen() {
+        let tokens = lex("(x").unwrap();
+        let err = parse(tokens).unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::MissingToken {
+                expected: "')'",
+                pos: 2usize
+            }
+        ));
+    }
+
+    #[test]
+    fn test_parse_errors_missing_term() {
+        let tokens = lex("\\x.(").unwrap();
+        let err = parse(tokens).unwrap_err();
+        assert!(matches!(
+            err,
+            ParseError::MissingToken {
+                expected: "term",
+                pos: 4usize
+            }
+        ));
+    }
+
+    #[test]
+    fn test_parse_errors_trailing_tokens() {
+        let tokens = lex("x)").unwrap();
+        let err = parse(tokens).unwrap_err();
+
+        assert!(matches!(
+            err,
+            ParseError::UnexpectedToken {
+                expected: "end of input",
+                found: TokenSpan {
+                    start: 1usize,
+                    end: 2usize,
+                    ..
+                }
+            }
+        ));
     }
 }
