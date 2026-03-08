@@ -63,7 +63,7 @@ fn format_eval_error(source: &str, err: EvalError) -> String {
 mod tests {
     use crate::{
         eval::EvalError,
-        lexer::{LexError, Span, TokenKind, TokenSpan},
+        lexer::{LexError, Span, Token, TokenKind},
         parser::ParseError,
         repl::format_eval_error,
     };
@@ -97,10 +97,9 @@ mod tests {
         let source = "x)";
         let err = EvalError::Parse(ParseError::UnexpectedToken {
             expected: "end of input",
-            found: TokenSpan {
+            found: Token {
                 kind: TokenKind::RParen,
-                start: 1,
-                end: 2,
+                span: Span { start: 1, end: 2 },
             },
         });
         let output = format_eval_error(source, err);

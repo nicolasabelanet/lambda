@@ -8,7 +8,7 @@ atom        := IDENT | LPAREN term RPAREN
 
 use std::fmt::{Debug, Display};
 
-use crate::lexer::{TokenKind, TokenSpan};
+use crate::lexer::{Token, TokenKind};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Term {
@@ -21,7 +21,7 @@ pub enum Term {
 pub enum ParseError {
     UnexpectedToken {
         expected: &'static str,
-        found: TokenSpan,
+        found: Token,
     },
     UnexpectedEof {
         expected: &'static str,
@@ -53,8 +53,8 @@ impl ParseError {
     pub fn span(&self) -> crate::lexer::Span {
         match self {
             ParseError::UnexpectedToken { found, .. } => crate::lexer::Span {
-                start: found.start,
-                end: found.end,
+                start: found.span.start,
+                end: found.span.end,
             },
             ParseError::UnexpectedEof { pos, .. } => crate::lexer::Span {
                 start: *pos,
@@ -110,15 +110,15 @@ impl Display for Term {
 
 struct Parser {
     pos: usize,
-    input: Vec<TokenSpan>,
+    input: Vec<Token>,
 }
 
 impl Parser {
-    fn new(input: Vec<TokenSpan>) -> Parser {
+    fn new(input: Vec<Token>) -> Parser {
         Parser { pos: 0, input }
     }
 
-    fn peek(&self) -> Option<&TokenSpan> {
+    fn peek(&self) -> Option<&Token> {
         if self.pos >= self.input.len() {
             return None;
         }
@@ -133,7 +133,7 @@ impl Parser {
     }
 
     fn eof_pos(&self) -> usize {
-        self.input.last().map(|token| token.end).unwrap_or(0)
+        self.input.last().map(|token| token.span.end).unwrap_or(0)
     }
 
     fn parse_atom(&mut self) -> Result<Term, ParseError> {
@@ -157,7 +157,7 @@ impl Parser {
                 self.advance();
                 let term = self.parse_term()?;
                 match self.peek() {
-                    Some(TokenSpan {
+                    Some(Token {
                         kind: TokenKind::RParen,
                         ..
                     }) => {
@@ -166,7 +166,7 @@ impl Parser {
                     }
                     Some(found) => Err(ParseError::MissingToken {
                         expected: "')'",
-                        pos: found.start,
+                        pos: found.span.start,
                     }),
                     None => Err(ParseError::MissingToken {
                         expected: "')'",
@@ -176,7 +176,7 @@ impl Parser {
             }
             TokenKind::EOF => Err(ParseError::MissingToken {
                 expected: "term",
-                pos: token.start,
+                pos: token.span.start,
             }),
             _ => Err(ParseError::UnexpectedToken {
                 expected: "term",
@@ -188,10 +188,10 @@ impl Parser {
     fn is_next_token_atom(&self) -> bool {
         matches!(
             self.peek(),
-            Some(TokenSpan {
+            Some(Token {
                 kind: TokenKind::LParen,
                 ..
-            }) | Some(TokenSpan {
+            }) | Some(Token {
                 kind: TokenKind::Ident(_),
                 ..
             })
@@ -215,7 +215,7 @@ impl Parser {
 
     fn parse_lambda(&mut self) -> Result<Term, ParseError> {
         match self.peek() {
-            Some(TokenSpan {
+            Some(Token {
                 kind: TokenKind::Lambda,
                 ..
             }) => self.advance(),
@@ -234,7 +234,7 @@ impl Parser {
         }
 
         let identifier = match self.peek() {
-            Some(TokenSpan {
+            Some(Token {
                 kind: TokenKind::Ident(name),
                 ..
             }) => {
@@ -245,7 +245,7 @@ impl Parser {
             Some(found) => {
                 return Err(ParseError::MissingToken {
                     expected: "identifier",
-                    pos: found.start,
+                    pos: found.span.start,
                 });
             }
             None => {
@@ -257,14 +257,14 @@ impl Parser {
         };
 
         match self.peek() {
-            Some(TokenSpan {
+            Some(Token {
                 kind: TokenKind::Dot,
                 ..
             }) => self.advance(),
             Some(found) => {
                 return Err(ParseError::MissingToken {
                     expected: "'.'",
-                    pos: found.start,
+                    pos: found.span.start,
                 });
             }
             None => {
@@ -282,7 +282,7 @@ impl Parser {
 
     fn parse_term(&mut self) -> Result<Term, ParseError> {
         match self.peek() {
-            Some(TokenSpan {
+            Some(Token {
                 kind: TokenKind::Lambda,
                 ..
             }) => self.parse_lambda(),
@@ -291,12 +291,12 @@ impl Parser {
     }
 }
 
-pub fn parse(input: Vec<TokenSpan>) -> Result<Term, ParseError> {
+pub fn parse(input: Vec<Token>) -> Result<Term, ParseError> {
     let mut parser = Parser::new(input);
     let term = parser.parse_term()?;
 
     match parser.peek() {
-        Some(TokenSpan {
+        Some(Token {
             kind: TokenKind::EOF,
             ..
         }) => Ok(term),
@@ -311,8 +311,8 @@ pub fn parse(input: Vec<TokenSpan>) -> Result<Term, ParseError> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        lexer::{Span, TokenSpan, lex},
-        parser::{ParseError, Term, parse},
+        lexer::{lex, Span, Token},
+        parser::{parse, ParseError, Term},
     };
 
     fn lex_and_parse(input: &str) -> Term {
@@ -516,9 +516,11 @@ mod tests {
             err,
             ParseError::UnexpectedToken {
                 expected: "end of input",
-                found: TokenSpan {
-                    start: 1usize,
-                    end: 2usize,
+                found: Token {
+                    span: Span {
+                        start: 1usize,
+                        end: 2usize,
+                    },
                     ..
                 }
             }
