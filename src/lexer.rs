@@ -72,10 +72,7 @@ impl Lexer {
             return None;
         }
 
-        let char = self.input.get(self.pos).copied();
-        dbg!(char);
-
-        char
+        self.input.get(self.pos).copied()
     }
 
     fn advance(&mut self) {
@@ -123,7 +120,7 @@ pub fn lex(input: &str) -> Vec<Token> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Lexer, Token, lex};
+    use crate::lexer::{Lexer, Token, lex};
 
     #[test]
     fn test_lone_ident() {

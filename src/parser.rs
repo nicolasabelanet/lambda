@@ -10,7 +10,7 @@ use std::fmt::{Debug, Display};
 
 use crate::lexer::Token;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Term {
     Lambda(String, Box<Term>),
     Application(Box<Term>, Box<Term>),
@@ -58,9 +58,7 @@ impl Parser {
             return None;
         }
 
-        let token = self.input.get(self.pos).cloned();
-        dbg!(&token);
-        token
+        self.input.get(self.pos).cloned()
     }
 
     fn advance(&mut self) {
@@ -70,7 +68,6 @@ impl Parser {
     }
 
     fn parse_atom(&mut self) -> Term {
-        println!("Parsing atom");
         match self.peek() {
             Some(Token::Ident(name)) => {
                 self.advance();

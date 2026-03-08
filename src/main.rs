@@ -1,6 +1,6 @@
 use lc::{
     lexer::lex,
-    parser::{Term, parse},
+    parser::{Term, parse}, repl,
 };
 
 fn lex_and_parse(input: &str) -> Term {
@@ -9,5 +9,5 @@ fn lex_and_parse(input: &str) -> Term {
 }
 
 fn main() {
-    println!("{}", lex_and_parse("f (\\x.x)"));
+    repl::repl()
 }
