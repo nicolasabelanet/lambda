@@ -27,7 +27,13 @@ pub struct TokenSpan {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LexError {
-    InvalidChar { ch: char, pos: usize },
+    InvalidChar { ch: char, span: Span },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Span {
+    start: usize,
+    end: usize,
 }
 
 struct Lexer {
@@ -102,7 +108,10 @@ impl Lexer {
             }
             Some(c) => Err(LexError::InvalidChar {
                 ch: c,
-                pos: self.pos,
+                span: Span {
+                    start,
+                    end: self.pos,
+                },
             }),
             None => Ok(TokenSpan {
                 kind: TokenKind::EOF,
@@ -135,12 +144,13 @@ impl Lexer {
     }
 }
 
-pub fn lex(input: &str) -> Vec<TokenSpan> {
+pub fn lex(input: &str) -> Result<Vec<TokenSpan>, LexError> {
     let mut tokens = Vec::new();
     let mut lexer = Lexer::new(input);
 
     loop {
-        match lexer.next_token() {
+        let result = lexer.next_token();
+        match result {
             Ok(token) => {
                 let mut end = false;
 
@@ -159,14 +169,11 @@ pub fn lex(input: &str) -> Vec<TokenSpan> {
                     break;
                 }
             }
-            Err(err) => {
-                eprintln!("{err:?}");
-                break;
-            }
+            Err(err) => return Err(err),
         }
     }
 
-    tokens
+    Ok(tokens)
 }
 
 #[cfg(test)]
@@ -180,52 +187,67 @@ mod tests {
     #[test]
     fn test_lone_ident() {
         assert_eq!(
-            kinds(lex("x")),
+            kinds(lex("x").unwrap()),
             vec![TokenKind::Ident("x".into()), TokenKind::EOF]
         );
         assert_eq!(
-            kinds(lex("xyz123")),
+            kinds(lex("xyz123").unwrap()),
             vec![TokenKind::Ident("xyz123".into()), TokenKind::EOF]
         );
         assert_eq!(
-            kinds(lex("123xyz")),
+            kinds(lex("123xyz").unwrap()),
             vec![TokenKind::Ident("123xyz".into()), TokenKind::EOF]
         );
         assert_eq!(
-            kinds(lex("123")),
+            kinds(lex("123").unwrap()),
             vec![TokenKind::Ident("123".into()), TokenKind::EOF]
         );
         assert_eq!(
-            kinds(lex("xyz")),
+            kinds(lex("xyz").unwrap()),
             vec![TokenKind::Ident("xyz".into()), TokenKind::EOF]
         );
     }
 
     #[test]
     fn test_lone_lambda() {
-        assert_eq!(kinds(lex("\\")), vec![TokenKind::Lambda, TokenKind::EOF]);
-        assert_eq!(kinds(lex("λ")), vec![TokenKind::Lambda, TokenKind::EOF]);
+        assert_eq!(
+            kinds(lex("\\").unwrap()),
+            vec![TokenKind::Lambda, TokenKind::EOF]
+        );
+        assert_eq!(
+            kinds(lex("λ").unwrap()),
+            vec![TokenKind::Lambda, TokenKind::EOF]
+        );
     }
 
     #[test]
     fn test_lone_dot() {
-        assert_eq!(kinds(lex(".")), vec![TokenKind::Dot, TokenKind::EOF]);
+        assert_eq!(
+            kinds(lex(".").unwrap()),
+            vec![TokenKind::Dot, TokenKind::EOF]
+        );
     }
 
     #[test]
     fn test_lone_lparen() {
-        assert_eq!(kinds(lex("(")), vec![TokenKind::LParen, TokenKind::EOF]);
+        assert_eq!(
+            kinds(lex("(").unwrap()),
+            vec![TokenKind::LParen, TokenKind::EOF]
+        );
     }
 
     #[test]
     fn test_lone_rparen() {
-        assert_eq!(kinds(lex(")")), vec![TokenKind::RParen, TokenKind::EOF]);
+        assert_eq!(
+            kinds(lex(")").unwrap()),
+            vec![TokenKind::RParen, TokenKind::EOF]
+        );
     }
 
     #[test]
     fn test_ident_boundary() {
         assert_eq!(
-            kinds(lex("(abc)")),
+            kinds(lex("(abc)").unwrap()),
             vec![
                 TokenKind::LParen,
                 TokenKind::Ident("abc".into()),
@@ -234,7 +256,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            kinds(lex(".a.b.c.")),
+            kinds(lex(".a.b.c.").unwrap()),
             vec![
                 TokenKind::Dot,
                 TokenKind::Ident("a".into()),
@@ -248,7 +270,7 @@ mod tests {
         );
 
         assert_eq!(
-            kinds(lex("a b c")),
+            kinds(lex("a b c").unwrap()),
             vec![
                 TokenKind::Ident("a".into()),
                 TokenKind::Ident("b".into()),
@@ -261,7 +283,7 @@ mod tests {
     #[test]
     fn test_whitespace_removal() {
         assert_eq!(
-            kinds(lex("\n\t  \\x. x\r\n")),
+            kinds(lex("\n\t  \\x. x\r\n").unwrap()),
             vec![
                 TokenKind::Lambda,
                 TokenKind::Ident("x".into()),
@@ -272,7 +294,7 @@ mod tests {
         );
 
         assert_eq!(
-            kinds(lex("              x    (         .       )          y")),
+            kinds(lex("              x    (         .       )          y").unwrap()),
             vec![
                 TokenKind::Ident("x".into()),
                 TokenKind::LParen,
@@ -286,13 +308,13 @@ mod tests {
 
     #[test]
     fn test_empty() {
-        assert_eq!(kinds(lex("")), vec![TokenKind::EOF]);
+        assert_eq!(kinds(lex("").unwrap()), vec![TokenKind::EOF]);
     }
 
     #[test]
     fn test_whitespace_only() {
         assert_eq!(
-            kinds(lex("          \t\t\t\t \r \n         \t")),
+            kinds(lex("          \t\t\t\t \r \n         \t").unwrap()),
             vec![TokenKind::EOF]
         );
     }
@@ -300,7 +322,7 @@ mod tests {
     #[test]
     fn test_expressions() {
         assert_eq!(
-            kinds(lex("(\\x.x) y")),
+            kinds(lex("(\\x.x) y").unwrap()),
             vec![
                 TokenKind::LParen,
                 TokenKind::Lambda,
