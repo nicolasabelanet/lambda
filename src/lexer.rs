@@ -21,7 +21,8 @@ pub enum TokenKind {
 #[derive(Debug, PartialEq, Clone)]
 pub struct TokenSpan {
     pub kind: TokenKind,
-    pub pos: usize,
+    pub start: usize,
+    pub end: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,7 +43,8 @@ impl Lexer {
         }
     }
 
-    fn lex_ident(&mut self) -> Token {
+    fn lex_ident(&mut self) -> TokenSpan {
+        let start = self.pos;
         let mut ident = String::new();
         while let Some(c) = self.peek()
             && c.is_ascii_alphanumeric()
@@ -50,40 +52,67 @@ impl Lexer {
             ident.push(c);
             self.advance();
         }
+        let end = self.pos;
 
-        Token::Ident(ident)
+        TokenSpan {
+            kind: TokenKind::Ident(ident),
+            start,
+            end,
+        }
     }
 
-    fn next_token(&mut self) -> Result<Token, LexError> {
+    fn next_token(&mut self) -> Result<TokenSpan, LexError> {
         self.skip_whitespace();
+
+        let start = self.pos;
 
         match self.peek() {
             Some(c) if c.is_ascii_alphanumeric() => Ok(self.lex_ident()),
             Some('\\') | Some('λ') => {
                 self.advance();
-                Ok(Token::Lambda)
+                Ok(TokenSpan {
+                    kind: TokenKind::Lambda,
+                    start,
+                    end: self.pos,
+                })
             }
             Some('.') => {
                 self.advance();
-                Ok(Token::Dot)
+                Ok(TokenSpan {
+                    kind: TokenKind::Dot,
+                    start,
+                    end: self.pos,
+                })
             }
             Some('(') => {
                 self.advance();
-                Ok(Token::LParen)
+                Ok(TokenSpan {
+                    kind: TokenKind::LParen,
+                    start,
+                    end: self.pos,
+                })
             }
             Some(')') => {
                 self.advance();
-                Ok(Token::RParen)
+                Ok(TokenSpan {
+                    kind: TokenKind::RParen,
+                    start,
+                    end: self.pos,
+                })
             }
             Some(c) => Err(LexError::InvalidChar {
                 ch: c,
                 pos: self.pos,
             }),
-            None => Ok(Token::EOF),
+            None => Ok(TokenSpan {
+                kind: TokenKind::EOF,
+                start: self.pos,
+                end: self.pos,
+            }),
         }
     }
 
-    fn peek(&mut self) -> Option<char> {
+    fn peek(&self) -> Option<char> {
         if self.pos >= self.input.len() {
             return None;
         }
@@ -106,7 +135,7 @@ impl Lexer {
     }
 }
 
-pub fn lex(input: &str) -> Vec<Token> {
+pub fn lex(input: &str) -> Vec<TokenSpan> {
     let mut tokens = Vec::new();
     let mut lexer = Lexer::new(input);
 
@@ -115,7 +144,13 @@ pub fn lex(input: &str) -> Vec<Token> {
             Ok(token) => {
                 let mut end = false;
 
-                if matches!(&token, Token::EOF) {
+                if matches!(
+                    &token,
+                    TokenSpan {
+                        kind: TokenKind::EOF,
+                        ..
+                    }
+                ) {
                     end = true;
                 }
                 tokens.push(token);
