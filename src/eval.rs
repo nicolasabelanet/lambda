@@ -55,16 +55,23 @@ impl Interpreter {
         match ast {
             Statement::Let(name, term) => {
                 let resolved = resolve(&term, &self.env);
-                self.env.insert(name, normalize(&resolved)?);
+                self.env
+                    .insert(name, normalize_with_limit(&resolved, self.step_limit)?);
                 Ok(None)
             }
             Statement::Expr(term) => {
                 let resolved = resolve(&term, &self.env);
-                let result = normalize(&resolved)?;
+                let result = normalize_with_limit(&resolved, self.step_limit)?;
                 self.env.insert("_".to_string(), result.clone());
                 Ok(Some(result))
             }
         }
+    }
+}
+
+impl Default for Interpreter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
