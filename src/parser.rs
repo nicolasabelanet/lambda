@@ -1,9 +1,10 @@
 /* grammar
 
-term        := lambda | application
+term        := let_expr | lambda | application
 lambda      := LAMBDA IDENT DOT term
 application := atom atom*
 atom        := IDENT | LPAREN term RPAREN
+let_expr    := LET IDENT EQUAL term IN term
 */
 
 use std::fmt::{Debug, Display};
@@ -15,6 +16,16 @@ pub enum Term {
     Lambda(String, Box<Term>),
     Application(Box<Term>, Box<Term>),
     Var(String),
+    Let {
+        name: String,
+        value: Box<Term>,
+        body: Box<Term>,
+    },
+}
+
+pub enum Statment {
+    Let(String, Term),
+    Expr(Term),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -289,6 +300,106 @@ impl Parser {
             _ => self.parse_application(),
         }
     }
+
+    fn parse_let_head(&mut self) -> Result<(String, Term), ParseError> {
+        match self.peek() {
+            Some(Token {
+                kind: TokenKind::Let,
+                ..
+            }) => {}
+            Some(found) => {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "let",
+                    found: found.clone(),
+                });
+            }
+            None => {
+                return Err(ParseError::MissingToken {
+                    expected: "let",
+                    pos: self.eof_pos(),
+                });
+            }
+        }
+    }
+
+    fn parse_statement(&mut self) -> Result<Statment, ParseError> {
+        match self.peek() {
+            Some(Token {
+                kind: TokenKind::Let,
+                ..
+            }) => {
+                self.advance();
+                let name = match self.peek() {
+                    Some(Token {
+                        kind: TokenKind::Ident(name),
+                        ..
+                    }) => {
+                        let name = name.clone();
+                        self.advance();
+                        name
+                    }
+
+                    Some(found) => {
+                        return Err(ParseError::MissingToken {
+                            expected: "identifier",
+                            pos: found.span.start,
+                        });
+                    }
+                    None => {
+                        return Err(ParseError::MissingToken {
+                            expected: "identifier",
+                            pos: self.eof_pos(),
+                        });
+                    }
+                };
+
+                match self.peek() {
+                    Some(Token {
+                        kind: TokenKind::Equals,
+                        ..
+                    }) => self.advance(),
+
+                    Some(found) => {
+                        return Err(ParseError::MissingToken {
+                            expected: "'='",
+                            pos: found.span.start,
+                        });
+                    }
+                    None => {
+                        return Err(ParseError::MissingToken {
+                            expected: "'='",
+                            pos: self.eof_pos(),
+                        });
+                    }
+                }
+
+                let value = self.parse_term()?;
+
+                match self.peek() {
+                    Some(Token {
+                        kind: TokenKind::In,
+                        ..
+                    }) => self.advance(),
+                    Some(found) => {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: "end of input",
+                            found: found.clone(),
+                        });
+                    }
+                    None => return Ok(Statment::Let(name.clone(), value)),
+                }
+
+                let body = self.parse_term()?;
+
+                Ok(Statment::Expr(Term::Let {
+                    name,
+                    value: Box::new(value),
+                    body: Box::new(body),
+                }))
+            }
+            _ => Ok(Statment::Expr(self.parse_term()?)),
+        }
+    }
 }
 
 pub fn parse(input: Vec<Token>) -> Result<Term, ParseError> {
@@ -311,8 +422,8 @@ pub fn parse(input: Vec<Token>) -> Result<Term, ParseError> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        lexer::{lex, Span, Token},
-        parser::{parse, ParseError, Term},
+        lexer::{Span, Token, lex},
+        parser::{ParseError, Term, parse},
     };
 
     fn lex_and_parse(input: &str) -> Term {

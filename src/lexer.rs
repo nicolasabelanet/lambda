@@ -2,6 +2,9 @@
 pub enum TokenKind {
     Lambda,
     Dot,
+    Let,
+    Equals,
+    In,
     LParen,
     RParen,
     Ident(String),
@@ -63,9 +66,21 @@ impl Lexer {
         }
         let end = self.pos;
 
-        Token {
-            kind: TokenKind::Ident(ident),
-            span: Span { start, end },
+        let span = Span { start, end };
+
+        match ident.as_str() {
+            "in" => Token {
+                kind: TokenKind::In,
+                span,
+            },
+            "let" => Token {
+                kind: TokenKind::Let,
+                span,
+            },
+            _ => Token {
+                kind: TokenKind::Ident(ident),
+                span,
+            },
         }
     }
 
@@ -90,6 +105,16 @@ impl Lexer {
                 self.advance();
                 Ok(Token {
                     kind: TokenKind::Dot,
+                    span: Span {
+                        start,
+                        end: self.pos,
+                    },
+                })
+            }
+            Some('=') => {
+                self.advance();
+                Ok(Token {
+                    kind: TokenKind::Equals,
                     span: Span {
                         start,
                         end: self.pos,
@@ -253,6 +278,30 @@ mod tests {
         assert_eq!(
             kinds(lex(")").unwrap()),
             vec![TokenKind::RParen, TokenKind::EOF]
+        );
+    }
+
+    #[test]
+    fn test_keywords_and_equals() {
+        assert_eq!(
+            kinds(lex("let").unwrap()),
+            vec![TokenKind::Let, TokenKind::EOF]
+        );
+        assert_eq!(
+            kinds(lex("in").unwrap()),
+            vec![TokenKind::In, TokenKind::EOF]
+        );
+        assert_eq!(
+            kinds(lex("=").unwrap()),
+            vec![TokenKind::Equals, TokenKind::EOF]
+        );
+        assert_eq!(
+            kinds(lex("letx").unwrap()),
+            vec![TokenKind::Ident("letx".into()), TokenKind::EOF]
+        );
+        assert_eq!(
+            kinds(lex("in1").unwrap()),
+            vec![TokenKind::Ident("in1".into()), TokenKind::EOF]
         );
     }
 
