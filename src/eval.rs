@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    lexer::{lex, LexError},
-    parser::{parse, parse_term, ParseError, Statement, Term},
+    lexer::{LexError, lex},
+    parser::{ParseError, Statement, Term, parse, parse_term},
 };
 
 #[derive(Debug)]
@@ -41,10 +41,25 @@ pub struct Interpreter {
     step_limit: u32,
 }
 
+fn ast(input: &str) -> Term {
+    parse_term(lex(input).unwrap()).unwrap()
+}
+
+fn stdlib() -> HashMap<String, Term> {
+    HashMap::from_iter([
+        ("true".to_string(), ast("\\t.\\f.t")),
+        ("false".to_string(), ast("\\t.\\f.f")),
+        ("if".to_string(), ast("\\b.\\t.\\f. b t f")),
+        ("and".to_string(), ast("\\p.\\q. p q p")),
+        ("or".to_string(), ast("\\p.\\q. p p q")),
+        ("not".to_string(), ast("\\p. p false true")),
+    ])
+}
+
 impl Interpreter {
     pub fn new() -> Self {
         Interpreter {
-            env: HashMap::new(),
+            env: stdlib(),
             step_limit: 1_000,
         }
     }
@@ -86,7 +101,8 @@ fn resolve_impl(term: &Term, env: &HashMap<String, Term>, bound: &mut HashSet<St
             if bound.contains(name) {
                 term.clone()
             } else if let Some(global) = env.get(name) {
-                capture_avoiding_clone(global, bound)
+                let expanded = capture_avoiding_clone(global, bound);
+                resolve_impl(&expanded, env, bound)
             } else {
                 term.clone()
             }
@@ -392,11 +408,11 @@ mod tests {
 
     use crate::{
         eval::{
-            create_fresh_name, free_vars, normalize, rename, step, substitute, update_lambda,
-            Interpreter,
+            Interpreter, create_fresh_name, free_vars, normalize, rename, step, substitute,
+            update_lambda,
         },
         lexer::lex,
-        parser::{parse_term, Term},
+        parser::{Term, parse_term},
     };
 
     fn ast(input: &str) -> Term {
