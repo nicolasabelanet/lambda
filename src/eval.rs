@@ -62,13 +62,27 @@ pub fn normalize_with_limit(term: &Term, limit: u32) -> Result<Term, EvalError> 
     Ok(current)
 }
 
+fn is_value(term: &Term) -> bool {
+    matches!(term, Term::Var(_) | Term::Lambda(_, _))
+}
+
 fn step(term: &Term) -> Option<Term> {
     match term {
         Term::Var(_) => None,
         Term::Lambda(_, _) => None,
         Term::Application(left, right) => match left.as_ref() {
-            Term::Lambda(param, body) => Some(substitute(body, param, right)),
-            _ => step(left).map(|new_left| Term::Application(Box::new(new_left), right.clone())),
+            Term::Lambda(param, body) => {
+                if is_value(right) {
+                    Some(substitute(body, param, right))
+                } else {
+                    step(right).map(|new_right| {
+                        Term::Application(left.clone(), Box::new(new_right))
+                    })
+                }
+            }
+            _ => step(left).map(|new_left| {
+                Term::Application(Box::new(new_left), right.clone())
+            }),
         },
     }
 }
@@ -268,7 +282,7 @@ mod tests {
         fn test_step_call_by_name_does_not_reduce_argument() {
             assert_eq!(step(&ast("f ((\\x.x) y)")), None);
 
-            assert_eq!(step(&ast("(\\x.z) ((\\y.y) w)")), Some(ast("z")));
+            assert_eq!(step(&ast("(\\x.z) ((\\y.y) w)")), Some(ast("(\\x.z) w")));
         }
     }
 
