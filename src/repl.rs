@@ -2,7 +2,7 @@ use rustyline::DefaultEditor;
 
 use crate::{
     diagnostic::format_span_error,
-    eval::{evaluate, EvalError},
+    eval::{EvalError, evaluate},
 };
 
 pub fn repl() {
@@ -56,6 +56,7 @@ fn format_eval_error(source: &str, err: EvalError) -> String {
             let span = err.span();
             format_span_error(source, &message, span)
         }
+        _ => format!("error: {err}"),
     }
 }
 

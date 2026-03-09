@@ -1,14 +1,27 @@
 use std::collections::HashSet;
 
 use crate::{
-    lexer::{lex, LexError},
-    parser::{parse, ParseError, Term},
+    lexer::{LexError, lex},
+    parser::{ParseError, Term, parse},
 };
 
 #[derive(Debug)]
 pub enum EvalError {
     Lex(LexError),
     Parse(ParseError),
+    StepLimit { limit: u32 },
+}
+
+impl std::fmt::Display for EvalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EvalError::Lex(err) => write!(f, "{}", err.message()),
+            EvalError::Parse(err) => write!(f, "{}", err.message()),
+            EvalError::StepLimit { limit } => {
+                write!(f, "step limit reached ({limit})")
+            }
+        }
+    }
 }
 
 impl From<LexError> for EvalError {
@@ -26,27 +39,27 @@ impl From<ParseError> for EvalError {
 pub fn evaluate(input: &str) -> Result<Term, EvalError> {
     let tokens = lex(input)?;
     let ast = parse(tokens)?;
-    Ok(normalize(&ast))
+    normalize(&ast)
 }
 
-pub fn normalize(term: &Term) -> Term {
+pub fn normalize(term: &Term) -> Result<Term, EvalError> {
     normalize_with_limit(term, 1_000)
 }
 
-pub fn normalize_with_limit(term: &Term, limit: u32) -> Term {
+pub fn normalize_with_limit(term: &Term, limit: u32) -> Result<Term, EvalError> {
     let mut current = term.clone();
 
     let mut steps: u32 = 0;
 
     while let Some(reduced) = step(&current) {
         if steps >= limit {
-            panic!("Too many steps")
+            return Err(EvalError::StepLimit { limit });
         }
         steps += 1;
         current = reduced;
     }
 
-    current
+    Ok(current)
 }
 
 fn step(term: &Term) -> Option<Term> {
@@ -89,7 +102,7 @@ fn update_lambda(lambda: &Term, new: &str) -> Term {
             let renamed_body = rename(body, param, new);
             Term::Lambda(new.to_string(), Box::new(renamed_body))
         }
-        _ => panic!("update_lambda called on non lambda"),
+        _ => unreachable!("update_lambda called on non lambda"),
     }
 }
 
@@ -170,7 +183,7 @@ mod tests {
     use crate::{
         eval::{create_fresh_name, free_vars, normalize, rename, step, substitute, update_lambda},
         lexer::lex,
-        parser::{parse, Term},
+        parser::{Term, parse},
     };
 
     fn ast(input: &str) -> Term {
@@ -182,34 +195,37 @@ mod tests {
         use super::*;
         #[test]
         fn test_normalize_respects_capture_avoidance() {
-            assert_eq!(normalize(&ast("(\\x.\\y.x) y")), ast("\\y1.y"));
+            assert_eq!(normalize(&ast("(\\x.\\y.x) y")).unwrap(), ast("\\y1.y"));
 
-            assert_eq!(normalize(&ast("(\\x.\\y.x y) y")), ast("\\y1.y y1"));
+            assert_eq!(
+                normalize(&ast("(\\x.\\y.x y) y")).unwrap(),
+                ast("\\y1.y y1")
+            );
         }
 
         #[test]
         fn test_normalize_simple() {
-            assert_eq!(normalize(&ast("(\\x.x) y")), ast("y"));
+            assert_eq!(normalize(&ast("(\\x.x) y")).unwrap(), ast("y"));
 
-            assert_eq!(normalize(&ast("(\\x.\\y.x) a")), ast("\\y.a"));
+            assert_eq!(normalize(&ast("(\\x.\\y.x) a")).unwrap(), ast("\\y.a"));
 
-            assert_eq!(normalize(&ast("(\\x.x x) y")), ast("y y"));
+            assert_eq!(normalize(&ast("(\\x.x x) y")).unwrap(), ast("y y"));
         }
 
         #[test]
         fn test_normalize_multiple_steps() {
-            assert_eq!(normalize(&ast("((\\f.f) (\\x.x)) y")), ast("y"));
+            assert_eq!(normalize(&ast("((\\f.f) (\\x.x)) y")).unwrap(), ast("y"));
 
-            assert_eq!(normalize(&ast("(\\x.\\y.x) a b")), ast("a"));
+            assert_eq!(normalize(&ast("(\\x.\\y.x) a b")).unwrap(), ast("a"));
 
-            assert_eq!(normalize(&ast("(\\f.\\x.f x) g z")), ast("g z"));
+            assert_eq!(normalize(&ast("(\\f.\\x.f x) g z")).unwrap(), ast("g z"));
         }
 
         #[test]
         fn test_normalize_under_call_by_name() {
-            assert_eq!(normalize(&ast("(\\x.z) ((\\y.y) w)")), ast("z"));
+            assert_eq!(normalize(&ast("(\\x.z) ((\\y.y) w)")).unwrap(), ast("z"));
 
-            assert_eq!(normalize(&ast("(\\x.x) ((\\y.y) z)")), ast("z"));
+            assert_eq!(normalize(&ast("(\\x.x) ((\\y.y) z)")).unwrap(), ast("z"));
         }
     }
 
