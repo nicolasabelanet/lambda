@@ -23,7 +23,8 @@ pub enum Term {
     },
 }
 
-pub enum Statment {
+#[derive(Debug, PartialEq, Clone)]
+pub enum Statement {
     Let(String, Term),
     Expr(Term),
 }
@@ -100,6 +101,9 @@ impl Display for Term {
             Term::Lambda(name, body) => {
                 let string_body = body.to_string();
                 write!(f, "\\{name}.{}", string_body)
+            }
+            Term::Let { name, value, body } => {
+                write!(f, "let {name} = {value} in {body}")
             }
             Term::Application(left, right) => {
                 let mut left_string = left.to_string();
@@ -297,8 +301,44 @@ impl Parser {
                 kind: TokenKind::Lambda,
                 ..
             }) => self.parse_lambda(),
+            Some(Token {
+                kind: TokenKind::Let,
+                ..
+            }) => {
+                let (name, value) = self.parse_let_head()?;
+                let body = self.parse_scoped_let_tail()?;
+
+                Ok(Term::Let {
+                    name,
+                    value: Box::new(value),
+                    body: Box::new(body),
+                })
+            }
             _ => self.parse_application(),
         }
+    }
+
+    fn parse_scoped_let_tail(&mut self) -> Result<Term, ParseError> {
+        match self.peek() {
+            Some(Token {
+                kind: TokenKind::In,
+                ..
+            }) => self.advance(),
+            Some(found) => {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "in",
+                    found: found.clone(),
+                });
+            }
+            None => {
+                return Err(ParseError::UnexpectedEof {
+                    expected: "in",
+                    pos: self.eof_pos(),
+                });
+            }
+        }
+
+        self.parse_term()
     }
 
     fn parse_let_head(&mut self) -> Result<(String, Term), ParseError> {
@@ -306,7 +346,8 @@ impl Parser {
             Some(Token {
                 kind: TokenKind::Let,
                 ..
-            }) => {}
+            }) => self.advance(),
+
             Some(found) => {
                 return Err(ParseError::UnexpectedToken {
                     expected: "let",
@@ -314,95 +355,104 @@ impl Parser {
                 });
             }
             None => {
-                return Err(ParseError::MissingToken {
+                return Err(ParseError::UnexpectedEof {
                     expected: "let",
                     pos: self.eof_pos(),
                 });
             }
         }
+
+        let name = match self.peek() {
+            Some(Token {
+                kind: TokenKind::Ident(name),
+                ..
+            }) => {
+                let name = name.clone();
+                self.advance();
+                name
+            }
+
+            Some(found) => {
+                return Err(ParseError::MissingToken {
+                    expected: "identifier",
+                    pos: found.span.start,
+                });
+            }
+            None => {
+                return Err(ParseError::MissingToken {
+                    expected: "identifier",
+                    pos: self.eof_pos(),
+                });
+            }
+        };
+
+        match self.peek() {
+            Some(Token {
+                kind: TokenKind::Equals,
+                ..
+            }) => self.advance(),
+
+            Some(found) => {
+                return Err(ParseError::MissingToken {
+                    expected: "'='",
+                    pos: found.span.start,
+                });
+            }
+            None => {
+                return Err(ParseError::MissingToken {
+                    expected: "'='",
+                    pos: self.eof_pos(),
+                });
+            }
+        }
+
+        let value = self.parse_term()?;
+
+        Ok((name, value))
     }
 
-    fn parse_statement(&mut self) -> Result<Statment, ParseError> {
+    fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         match self.peek() {
             Some(Token {
                 kind: TokenKind::Let,
                 ..
             }) => {
-                self.advance();
-                let name = match self.peek() {
-                    Some(Token {
-                        kind: TokenKind::Ident(name),
-                        ..
-                    }) => {
-                        let name = name.clone();
-                        self.advance();
-                        name
-                    }
+                let (name, value) = self.parse_let_head()?;
 
-                    Some(found) => {
-                        return Err(ParseError::MissingToken {
-                            expected: "identifier",
-                            pos: found.span.start,
-                        });
-                    }
-                    None => {
-                        return Err(ParseError::MissingToken {
-                            expected: "identifier",
-                            pos: self.eof_pos(),
-                        });
-                    }
-                };
-
-                match self.peek() {
-                    Some(Token {
-                        kind: TokenKind::Equals,
-                        ..
-                    }) => self.advance(),
-
-                    Some(found) => {
-                        return Err(ParseError::MissingToken {
-                            expected: "'='",
-                            pos: found.span.start,
-                        });
-                    }
-                    None => {
-                        return Err(ParseError::MissingToken {
-                            expected: "'='",
-                            pos: self.eof_pos(),
-                        });
-                    }
-                }
-
-                let value = self.parse_term()?;
-
-                match self.peek() {
+                let body = match self.peek() {
                     Some(Token {
                         kind: TokenKind::In,
                         ..
-                    }) => self.advance(),
+                    }) => self.parse_scoped_let_tail()?,
+                    Some(Token {
+                        kind: TokenKind::EOF,
+                        ..
+                    }) => return Ok(Statement::Let(name.clone(), value)),
                     Some(found) => {
-                        return Err(ParseError::UnexpectedToken {
-                            expected: "end of input",
-                            found: found.clone(),
+                        return Err(ParseError::MissingToken {
+                            expected: "in",
+                            pos: found.span.start,
                         });
                     }
-                    None => return Ok(Statment::Let(name.clone(), value)),
-                }
+                    None => return Ok(Statement::Let(name.clone(), value)),
+                };
 
-                let body = self.parse_term()?;
-
-                Ok(Statment::Expr(Term::Let {
+                Ok(Statement::Expr(Term::Let {
                     name,
                     value: Box::new(value),
                     body: Box::new(body),
                 }))
             }
-            _ => Ok(Statment::Expr(self.parse_term()?)),
+            _ => Ok(Statement::Expr(self.parse_term()?)),
         }
     }
 }
 
-pub fn parse(input: Vec<Token>) -> Result<Term, ParseError> {
+pub fn parse(input: Vec<Token>) -> Result<Statement, ParseError> {
+    Parser::new(input).parse_statement()
+}
+
+pub fn parse_term(input: Vec<Token>) -> Result<Term, ParseError> {
     let mut parser = Parser::new(input);
     let term = parser.parse_term()?;
 
@@ -422,13 +472,13 @@ pub fn parse(input: Vec<Token>) -> Result<Term, ParseError> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        lexer::{Span, Token, lex},
-        parser::{ParseError, Term, parse},
+        lexer::{lex, Span, Token},
+        parser::{parse_term, ParseError, Term},
     };
 
     fn lex_and_parse(input: &str) -> Term {
         let tokens = lex(input).unwrap();
-        parse(tokens).unwrap()
+        parse_term(tokens).unwrap()
     }
 
     fn assert_roundtrip(term: Term) {
@@ -581,7 +631,7 @@ mod tests {
     #[test]
     fn test_parse_errors_missing_dot() {
         let tokens = lex("\\x").unwrap();
-        let err = parse(tokens).unwrap_err();
+        let err = parse_term(tokens).unwrap_err();
 
         assert!(matches!(
             err,
@@ -595,7 +645,7 @@ mod tests {
     #[test]
     fn test_parse_errors_missing_rparen() {
         let tokens = lex("(x").unwrap();
-        let err = parse(tokens).unwrap_err();
+        let err = parse_term(tokens).unwrap_err();
         assert!(matches!(
             err,
             ParseError::MissingToken {
@@ -608,7 +658,7 @@ mod tests {
     #[test]
     fn test_parse_errors_missing_term() {
         let tokens = lex("\\x.(").unwrap();
-        let err = parse(tokens).unwrap_err();
+        let err = parse_term(tokens).unwrap_err();
         assert!(matches!(
             err,
             ParseError::MissingToken {
@@ -621,7 +671,7 @@ mod tests {
     #[test]
     fn test_parse_errors_trailing_tokens() {
         let tokens = lex("x)").unwrap();
-        let err = parse(tokens).unwrap_err();
+        let err = parse_term(tokens).unwrap_err();
 
         assert!(matches!(
             err,

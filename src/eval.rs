@@ -1,8 +1,8 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     lexer::{LexError, lex},
-    parser::{ParseError, Term, parse},
+    parser::{ParseError, Statement, Term, parse, parse_term},
 };
 
 #[derive(Debug)]
@@ -36,17 +36,90 @@ impl From<ParseError> for EvalError {
     }
 }
 
+pub struct Interpreter {
+    env: HashMap<String, Term>,
+    step_limit: u32,
+}
+
+impl Interpreter {
+    pub fn new() -> Self {
+        Interpreter {
+            env: HashMap::new(),
+            step_limit: 1_000,
+        }
+    }
+
+    pub fn eval_statement(&mut self, input: &str) -> Result<Option<Term>, EvalError> {
+        let ast = parse(lex(input)?)?;
+
+        match ast {
+            Statement::Let(name, term) => {
+                let resolved = resolve(&term, &self.env);
+                self.env.insert(name, normalize(&resolved)?);
+                Ok(None)
+            }
+            Statement::Expr(term) => {
+                let resolved = resolve(&term, &self.env);
+                let result = normalize(&resolved)?;
+                self.env.insert("_".to_string(), result.clone());
+                Ok(Some(result))
+            }
+        }
+    }
+}
+
+pub fn resolve(term: &Term, env: &HashMap<String, Term>) -> Term {
+    let mut bound = HashSet::new();
+    resolve_impl(term, env, &mut bound)
+}
+
+fn resolve_impl(term: &Term, env: &HashMap<String, Term>, bound: &mut HashSet<String>) -> Term {
+    match term {
+        Term::Var(name) => {
+            if bound.contains(name) {
+                term.clone()
+            } else if let Some(global) = env.get(name) {
+                capture_avoiding_clone(global, bound)
+            } else {
+                term.clone()
+            }
+        }
+        Term::Lambda(param, body) => {
+            bound.insert(param.clone());
+            let body = resolve_impl(body, env, bound);
+            bound.remove(param);
+            Term::Lambda(param.clone(), Box::new(body))
+        }
+        Term::Application(left, right) => {
+            let left = resolve_impl(left, env, bound);
+            let right = resolve_impl(right, env, bound);
+            Term::Application(Box::new(left), Box::new(right))
+        }
+        Term::Let { name, value, body } => {
+            let value = resolve_impl(value, env, bound);
+            bound.insert(name.clone());
+            let body = resolve_impl(body, env, bound);
+            bound.remove(name);
+            Term::Let {
+                name: name.clone(),
+                value: Box::new(value),
+                body: Box::new(body),
+            }
+        }
+    }
+}
+
 pub fn evaluate(input: &str) -> Result<Term, EvalError> {
     let tokens = lex(input)?;
-    let ast = parse(tokens)?;
+    let ast = parse_term(tokens)?;
     normalize(&ast)
 }
 
-pub fn normalize(term: &Term) -> Result<Term, EvalError> {
+fn normalize(term: &Term) -> Result<Term, EvalError> {
     normalize_with_limit(term, 1_000)
 }
 
-pub fn normalize_with_limit(term: &Term, limit: u32) -> Result<Term, EvalError> {
+fn normalize_with_limit(term: &Term, limit: u32) -> Result<Term, EvalError> {
     let mut current = term.clone();
 
     let mut steps: u32 = 0;
@@ -70,19 +143,27 @@ fn step(term: &Term) -> Option<Term> {
     match term {
         Term::Var(_) => None,
         Term::Lambda(_, _) => None,
+        Term::Let { name, value, body } => {
+            if is_value(value) {
+                Some(substitute(body, name, value))
+            } else {
+                step(value).map(|new_value| Term::Let {
+                    name: name.clone(),
+                    value: Box::new(new_value),
+                    body: body.clone(),
+                })
+            }
+        }
         Term::Application(left, right) => match left.as_ref() {
             Term::Lambda(param, body) => {
                 if is_value(right) {
                     Some(substitute(body, param, right))
                 } else {
-                    step(right).map(|new_right| {
-                        Term::Application(left.clone(), Box::new(new_right))
-                    })
+                    step(right)
+                        .map(|new_right| Term::Application(left.clone(), Box::new(new_right)))
                 }
             }
-            _ => step(left).map(|new_left| {
-                Term::Application(Box::new(new_left), right.clone())
-            }),
+            _ => step(left).map(|new_left| Term::Application(Box::new(new_left), right.clone())),
         },
     }
 }
@@ -105,6 +186,76 @@ fn rename(term: &Term, old: &str, new: &str) -> Term {
                 term.clone()
             } else {
                 Term::Lambda(param.clone(), Box::new(rename(body, old, new)))
+            }
+        }
+        Term::Let { name, value, body } => {
+            if name == old {
+                Term::Let {
+                    name: name.clone(),
+                    value: Box::new(rename(value, old, new)),
+                    body: body.clone(),
+                }
+            } else {
+                Term::Let {
+                    name: name.clone(),
+                    value: Box::new(rename(value, old, new)),
+                    body: Box::new(rename(body, old, new)),
+                }
+            }
+        }
+    }
+}
+
+fn capture_avoiding_clone(term: &Term, avoid: &HashSet<String>) -> Term {
+    match term {
+        Term::Var(_) => term.clone(),
+        Term::Application(left, right) => Term::Application(
+            Box::new(capture_avoiding_clone(left, avoid)),
+            Box::new(capture_avoiding_clone(right, avoid)),
+        ),
+        Term::Lambda(param, body) => {
+            if avoid.contains(param) {
+                let mut used = avoid.clone();
+                used.extend(free_vars(body));
+                let fresh = create_fresh_name(param, &used);
+                let renamed_body = rename(body, param, &fresh);
+                let mut next_avoid = avoid.clone();
+                next_avoid.insert(fresh.clone());
+                Term::Lambda(
+                    fresh,
+                    Box::new(capture_avoiding_clone(&renamed_body, &next_avoid)),
+                )
+            } else {
+                let mut next_avoid = avoid.clone();
+                next_avoid.insert(param.clone());
+                Term::Lambda(
+                    param.clone(),
+                    Box::new(capture_avoiding_clone(body, &next_avoid)),
+                )
+            }
+        }
+        Term::Let { name, value, body } => {
+            let new_value = capture_avoiding_clone(value, avoid);
+            if avoid.contains(name) {
+                let mut used = avoid.clone();
+                used.extend(free_vars(body));
+                let fresh = create_fresh_name(name, &used);
+                let renamed_body = rename(body, name, &fresh);
+                let mut next_avoid = avoid.clone();
+                next_avoid.insert(fresh.clone());
+                Term::Let {
+                    name: fresh,
+                    value: Box::new(new_value),
+                    body: Box::new(capture_avoiding_clone(&renamed_body, &next_avoid)),
+                }
+            } else {
+                let mut next_avoid = avoid.clone();
+                next_avoid.insert(name.clone());
+                Term::Let {
+                    name: name.clone(),
+                    value: Box::new(new_value),
+                    body: Box::new(capture_avoiding_clone(body, &next_avoid)),
+                }
             }
         }
     }
@@ -136,7 +287,7 @@ fn create_fresh_name(base: &str, used: &HashSet<String>) -> String {
     }
 }
 
-pub fn free_vars(term: &Term) -> HashSet<String> {
+fn free_vars(term: &Term) -> HashSet<String> {
     match term {
         Term::Var(name) => HashSet::from([name.clone()]),
         Term::Application(left, right) => {
@@ -148,6 +299,13 @@ pub fn free_vars(term: &Term) -> HashSet<String> {
             let mut body_vars = free_vars(body);
             body_vars.remove(name);
             body_vars
+        }
+        Term::Let { name, value, body } => {
+            let mut vars = free_vars(value);
+            let mut body_vars = free_vars(body);
+            body_vars.remove(name);
+            vars.extend(body_vars);
+            vars
         }
     }
 }
@@ -187,6 +345,37 @@ pub fn substitute(term: &Term, var: &str, replacement: &Term) -> Term {
                 }
             }
         }
+        Term::Let { name, value, body } => {
+            let new_value = substitute(value, var, replacement);
+            if name == var {
+                Term::Let {
+                    name: name.clone(),
+                    value: Box::new(new_value),
+                    body: body.clone(),
+                }
+            } else {
+                let free_replacement = free_vars(replacement);
+                if free_replacement.contains(name) {
+                    let mut used = free_replacement;
+                    used.extend(free_vars(body));
+                    used.insert(name.clone());
+                    used.insert(var.to_string());
+                    let fresh_name = create_fresh_name(name, &used);
+                    let renamed_body = rename(body, name, &fresh_name);
+                    Term::Let {
+                        name: fresh_name.clone(),
+                        value: Box::new(new_value),
+                        body: Box::new(substitute(&renamed_body, var, replacement)),
+                    }
+                } else {
+                    Term::Let {
+                        name: name.clone(),
+                        value: Box::new(new_value),
+                        body: Box::new(substitute(body, var, replacement)),
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -197,11 +386,11 @@ mod tests {
     use crate::{
         eval::{create_fresh_name, free_vars, normalize, rename, step, substitute, update_lambda},
         lexer::lex,
-        parser::{Term, parse},
+        parser::{Term, parse_term},
     };
 
     fn ast(input: &str) -> Term {
-        parse(lex(input).unwrap()).unwrap()
+        parse_term(lex(input).unwrap()).unwrap()
     }
 
     mod test_normalize {

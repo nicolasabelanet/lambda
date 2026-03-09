@@ -2,11 +2,13 @@ use rustyline::DefaultEditor;
 
 use crate::{
     diagnostic::format_span_error,
-    eval::{EvalError, evaluate},
+    eval::{EvalError, Interpreter},
 };
 
 pub fn repl() {
     let mut rl = DefaultEditor::new().unwrap();
+
+    let mut interpreter = Interpreter::new();
 
     loop {
         let line = rl.readline("λ> ");
@@ -21,8 +23,9 @@ pub fn repl() {
 
                 rl.add_history_entry(input).ok();
 
-                match evaluate(input) {
-                    Ok(result) => println!("{result}"),
+                match interpreter.eval_statement(input) {
+                    Ok(Some(result)) => println!("{result}"),
+                    Ok(None) => {}
                     Err(err) => print_error(input, err),
                 }
             }

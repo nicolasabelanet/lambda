@@ -47,6 +47,10 @@ struct Lexer {
     input: Vec<char>,
 }
 
+fn is_ident_char(c: char) -> bool {
+    c == '_' || c.is_ascii_alphanumeric()
+}
+
 impl Lexer {
     fn new(input: &str) -> Lexer {
         Lexer {
@@ -59,7 +63,7 @@ impl Lexer {
         let start = self.pos;
         let mut ident = String::new();
         while let Some(c) = self.peek()
-            && c.is_ascii_alphanumeric()
+            && is_ident_char(c)
         {
             ident.push(c);
             self.advance();
@@ -90,7 +94,7 @@ impl Lexer {
         let start = self.pos;
 
         match self.peek() {
-            Some(c) if c.is_ascii_alphanumeric() => Ok(self.lex_ident()),
+            Some(c) if is_ident_char(c) => Ok(self.lex_ident()),
             Some('\\') | Some('λ') => {
                 self.advance();
                 Ok(Token {
