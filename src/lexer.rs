@@ -310,6 +310,25 @@ mod tests {
     }
 
     #[test]
+    fn test_let_expression_tokens() {
+        assert_eq!(
+            kinds(lex("let x = \\y.y in x").unwrap()),
+            vec![
+                TokenKind::Let,
+                TokenKind::Ident("x".into()),
+                TokenKind::Equals,
+                TokenKind::Lambda,
+                TokenKind::Ident("y".into()),
+                TokenKind::Dot,
+                TokenKind::Ident("y".into()),
+                TokenKind::In,
+                TokenKind::Ident("x".into()),
+                TokenKind::EOF
+            ]
+        );
+    }
+
+    #[test]
     fn test_ident_boundary() {
         assert_eq!(
             kinds(lex("(abc)").unwrap()),

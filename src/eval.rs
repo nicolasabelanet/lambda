@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    lexer::{LexError, lex},
-    parser::{ParseError, Statement, Term, parse, parse_term},
+    lexer::{lex, LexError},
+    parser::{parse, parse_term, ParseError, Statement, Term},
 };
 
 #[derive(Debug)]
@@ -391,9 +391,12 @@ mod tests {
     use std::collections::HashSet;
 
     use crate::{
-        eval::{create_fresh_name, free_vars, normalize, rename, step, substitute, update_lambda},
+        eval::{
+            create_fresh_name, free_vars, normalize, rename, step, substitute, update_lambda,
+            Interpreter,
+        },
         lexer::lex,
-        parser::{Term, parse_term},
+        parser::{parse_term, Term},
     };
 
     fn ast(input: &str) -> Term {
@@ -423,6 +426,15 @@ mod tests {
         }
 
         #[test]
+        fn test_normalize_let() {
+            assert_eq!(normalize(&ast("let id = \\x.x in id y")).unwrap(), ast("y"));
+            assert_eq!(
+                normalize(&ast("let x = a in let x = b in x")).unwrap(),
+                ast("b")
+            );
+        }
+
+        #[test]
         fn test_normalize_multiple_steps() {
             assert_eq!(normalize(&ast("((\\f.f) (\\x.x)) y")).unwrap(), ast("y"));
 
@@ -436,6 +448,17 @@ mod tests {
             assert_eq!(normalize(&ast("(\\x.z) ((\\y.y) w)")).unwrap(), ast("z"));
 
             assert_eq!(normalize(&ast("(\\x.x) ((\\y.y) z)")).unwrap(), ast("z"));
+        }
+    }
+
+    mod test_global_let {
+        use super::*;
+
+        #[test]
+        fn test_interpreter_global_let() {
+            let mut interpreter = Interpreter::new();
+            assert_eq!(interpreter.eval_statement("let id = \\x.x").unwrap(), None);
+            assert_eq!(interpreter.eval_statement("id z").unwrap(), Some(ast("z")));
         }
     }
 

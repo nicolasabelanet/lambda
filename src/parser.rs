@@ -349,9 +349,9 @@ impl Parser {
             }) => self.advance(),
 
             Some(found) => {
-                return Err(ParseError::UnexpectedToken {
+                return Err(ParseError::MissingToken {
                     expected: "let",
-                    found: found.clone(),
+                    pos: found.span.start,
                 });
             }
             None => {
@@ -379,7 +379,7 @@ impl Parser {
                 });
             }
             None => {
-                return Err(ParseError::MissingToken {
+                return Err(ParseError::UnexpectedEof {
                     expected: "identifier",
                     pos: self.eof_pos(),
                 });
@@ -399,7 +399,7 @@ impl Parser {
                 });
             }
             None => {
-                return Err(ParseError::MissingToken {
+                return Err(ParseError::UnexpectedEof {
                     expected: "'='",
                     pos: self.eof_pos(),
                 });
@@ -449,7 +449,20 @@ impl Parser {
 }
 
 pub fn parse(input: Vec<Token>) -> Result<Statement, ParseError> {
-    Parser::new(input).parse_statement()
+    let mut parser = Parser::new(input);
+    let statement = parser.parse_statement()?;
+
+    match parser.peek() {
+        Some(Token {
+            kind: TokenKind::EOF,
+            ..
+        }) => Ok(statement),
+        Some(found) => Err(ParseError::UnexpectedToken {
+            expected: "end of input",
+            found: found.clone(),
+        }),
+        None => Ok(statement),
+    }
 }
 
 pub fn parse_term(input: Vec<Token>) -> Result<Term, ParseError> {
@@ -472,8 +485,8 @@ pub fn parse_term(input: Vec<Token>) -> Result<Term, ParseError> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        lexer::{lex, Span, Token},
-        parser::{parse_term, ParseError, Term},
+        lexer::{Span, Token, lex},
+        parser::{ParseError, Statement, Term, parse, parse_term},
     };
 
     fn lex_and_parse(input: &str) -> Term {
@@ -626,6 +639,27 @@ mod tests {
                 )),
             )
         );
+        assert_eq!(
+            lex_and_parse("let id = \\x.x in id y"),
+            Term::Let {
+                name: "id".into(),
+                value: Box::new(Term::Lambda("x".into(), Box::new(Term::Var("x".into())))),
+                body: Box::new(Term::Application(
+                    Box::new(Term::Var("id".into())),
+                    Box::new(Term::Var("y".into())),
+                )),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_statement_global_let() {
+        let tokens = lex("let x = y").unwrap();
+        let statement = parse(tokens).unwrap();
+        assert!(matches!(
+            statement,
+            Statement::Let(name, Term::Var(value)) if name == "x" && value == "y"
+        ));
     }
 
     #[test]
