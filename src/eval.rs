@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    lexer::{LexError, lex},
-    parser::{ParseError, Term, Type, parse_term},
+    lexer::{lex, LexError},
+    parser::{parse_term, ParseError, Term, Type},
 };
 
 #[derive(Debug)]
@@ -397,8 +397,7 @@ mod tests {
 
     use crate::{
         eval::{
-            EvalMode, create_fresh_name, free_vars, normalize, rename, step, substitute,
-            update_lambda,
+            EvalError, EvalMode, create_fresh_name, free_vars, normalize, rename, step, substitute, update_lambda
         },
         lexer::lex,
         parser::{Term, parse_term},
@@ -408,148 +407,168 @@ mod tests {
         parse_term(lex(input).unwrap()).unwrap()
     }
 
-    mod test_normalize {
+    fn normalize_cbv(term: &Term) -> Result<Term, EvalError> {
+        normalize(term, EvalMode::CallByValue)
+    }
 
+    fn normalize_cbn(term: &Term) -> Result<Term, EvalError> {
+        normalize(term, EvalMode::CallByName)
+    }
+
+    fn step_cbv(term: &Term) -> Option<Term> {
+        step(term, EvalMode::CallByValue)
+    }
+
+    fn step_cbn(term: &Term) -> Option<Term> {
+        step(term, EvalMode::CallByName)
+    }
+
+    mod cbv {
         use super::*;
-        #[test]
-        fn test_normalize_respects_capture_avoidance() {
-            assert_eq!(
-                normalize(&term("(\\x.\\y.x) y"), EvalMode::CallByValue).unwrap(),
-                term("\\y1.y")
-            );
 
-            assert_eq!(
-                normalize(&term("(\\x.\\y.x y) y"), EvalMode::CallByValue).unwrap(),
-                term("\\y1.y y1")
-            );
+        mod normalize {
+            use super::*;
+
+            #[test]
+            fn test_normalize_respects_capture_avoidance() {
+                assert_eq!(
+                    normalize_cbv(&term("(\\x.\\y.x) y")).unwrap(),
+                    term("\\y1.y")
+                );
+
+                assert_eq!(
+                    normalize_cbv(&term("(\\x.\\y.x y) y")).unwrap(),
+                    term("\\y1.y y1")
+                );
+            }
+
+            #[test]
+            fn test_normalize_simple() {
+                assert_eq!(normalize_cbv(&term("(\\x.x) y")).unwrap(), term("y"));
+
+                assert_eq!(
+                    normalize_cbv(&term("(\\x.\\y.x) a")).unwrap(),
+                    term("\\y.a")
+                );
+
+                assert_eq!(normalize_cbv(&term("(\\x.x x) y")).unwrap(), term("y y"));
+            }
+
+            #[test]
+            fn test_normalize_let() {
+                assert_eq!(
+                    normalize_cbv(&term("let id = \\x.x in id y")).unwrap(),
+                    term("y")
+                );
+                assert_eq!(
+                    normalize_cbv(&term("let x = a in let x = b in x")).unwrap(),
+                    term("b")
+                );
+            }
+
+            #[test]
+            fn test_normalize_multiple_steps() {
+                assert_eq!(
+                    normalize_cbv(&term("((\\f.f) (\\x.x)) y")).unwrap(),
+                    term("y")
+                );
+
+                assert_eq!(normalize_cbv(&term("(\\x.\\y.x) a b")).unwrap(), term("a"));
+
+                assert_eq!(
+                    normalize_cbv(&term("(\\f.\\x.f x) g z")).unwrap(),
+                    term("g z")
+                );
+            }
         }
 
-        #[test]
-        fn test_normalize_simple() {
-            assert_eq!(
-                normalize(&term("(\\x.x) y"), EvalMode::CallByValue).unwrap(),
-                term("y")
-            );
+        mod step {
+            use super::*;
 
-            assert_eq!(
-                normalize(&term("(\\x.\\y.x) a"), EvalMode::CallByValue).unwrap(),
-                term("\\y.a")
-            );
+            #[test]
+            fn test_simple_step() {
+                assert_eq!(step_cbv(&term("x")), None);
+                assert_eq!(step_cbv(&term("\\x.x")), None);
+                assert_eq!(step_cbv(&term("(\\x.x) y")), Some(term("y")));
+                assert_eq!(
+                    step_cbv(&term("((\\f.f) (\\x.x)) y")),
+                    Some(term("(\\x.x) y"))
+                );
+                assert_eq!(step_cbv(&term("f ((\\x.x) y)")), None);
+            }
 
-            assert_eq!(
-                normalize(&term("(\\x.x x) y"), EvalMode::CallByValue).unwrap(),
-                term("y y")
-            );
-        }
+            #[test]
+            fn test_step_stuck_terms() {
+                assert_eq!(step_cbv(&term("x")), None);
+                assert_eq!(step_cbv(&term("\\x.x")), None);
+                assert_eq!(step_cbv(&term("f x")), None);
+            }
 
-        #[test]
-        fn test_normalize_let() {
-            assert_eq!(
-                normalize(&term("let id = \\x.x in id y"), EvalMode::CallByValue).unwrap(),
-                term("y")
-            );
-            assert_eq!(
-                normalize(&term("let x = a in let x = b in x"), EvalMode::CallByValue).unwrap(),
-                term("b")
-            );
-        }
+            #[test]
+            fn test_step_simple_beta() {
+                assert_eq!(step_cbv(&term("(\\x.x) y")), Some(term("y")));
 
-        #[test]
-        fn test_normalize_multiple_steps() {
-            assert_eq!(
-                normalize(&term("((\\f.f) (\\x.x)) y"), EvalMode::CallByValue).unwrap(),
-                term("y")
-            );
+                assert_eq!(step_cbv(&term("(\\x.\\y.x) a")), Some(term("\\y.a")));
 
-            assert_eq!(
-                normalize(&term("(\\x.\\y.x) a b"), EvalMode::CallByValue).unwrap(),
-                term("a")
-            );
+                assert_eq!(step_cbv(&term("(\\x.x x) y")), Some(term("y y")));
+            }
 
-            assert_eq!(
-                normalize(&term("(\\f.\\x.f x) g z"), EvalMode::CallByValue).unwrap(),
-                term("g z")
-            );
-        }
+            #[test]
+            fn test_step_reduces_left_side_of_application() {
+                assert_eq!(
+                    step_cbv(&term("((\\f.f) (\\x.x)) y")),
+                    Some(term("(\\x.x) y"))
+                );
 
-        #[test]
-        fn test_normalize_under_call_by_name() {
-            assert_eq!(
-                normalize(&term("(\\x.z) ((\\y.y) w)"), EvalMode::CallByName).unwrap(),
-                term("z")
-            );
+                assert_eq!(step_cbv(&term("(((\\f.f) g) z)")), Some(term("(g z)")));
+            }
 
-            assert_eq!(
-                normalize(&term("(\\x.x) ((\\y.y) z)"), EvalMode::CallByName).unwrap(),
-                term("z")
-            );
+            #[test]
+            fn test_step_call_by_value_reduces_argument() {
+                assert_eq!(step_cbv(&term("f ((\\x.x) y)")), None);
+
+                assert_eq!(
+                    step_cbv(&term("(\\x.z) ((\\y.y) w)")),
+                    Some(term("(\\x.z) w"))
+                );
+            }
         }
     }
 
-    mod test_step {
+    mod cbn {
         use super::*;
 
-        #[test]
-        fn test_simple_step() {
-            assert_eq!(step(&term("x"), EvalMode::CallByValue), None);
-            assert_eq!(step(&term("\\x.x"), EvalMode::CallByValue), None);
-            assert_eq!(
-                step(&term("(\\x.x) y"), EvalMode::CallByValue),
-                Some(term("y"))
-            );
-            assert_eq!(
-                step(&term("((\\f.f) (\\x.x)) y"), EvalMode::CallByValue),
-                Some(term("(\\x.x) y"))
-            );
-            assert_eq!(step(&term("f ((\\x.x) y)"), EvalMode::CallByValue), None);
+        mod normalize {
+            use super::*;
+
+            #[test]
+            fn test_normalize_under_call_by_name() {
+                assert_eq!(
+                    normalize_cbn(&term("(\\x.z) ((\\y.y) w)")).unwrap(),
+                    term("z")
+                );
+
+                assert_eq!(
+                    normalize_cbn(&term("(\\x.x) ((\\y.y) z)")).unwrap(),
+                    term("z")
+                );
+            }
         }
 
-        #[test]
-        fn test_step_stuck_terms() {
-            assert_eq!(step(&term("x"), EvalMode::CallByValue), None);
-            assert_eq!(step(&term("\\x.x"), EvalMode::CallByValue), None);
-            assert_eq!(step(&term("f x"), EvalMode::CallByValue), None);
-        }
+        mod step {
+            use super::*;
 
-        #[test]
-        fn test_step_simple_beta() {
-            assert_eq!(
-                step(&term("(\\x.x) y"), EvalMode::CallByValue),
-                Some(term("y"))
-            );
+            #[test]
+            fn test_step_cbn_does_not_reduce_argument() {
+                assert_eq!(step_cbn(&term("f ((\\x.x) y)")), None);
 
-            assert_eq!(
-                step(&term("(\\x.\\y.x) a"), EvalMode::CallByValue),
-                Some(term("\\y.a"))
-            );
+                assert_eq!(step_cbn(&term("(\\x.z) ((\\y.y) w)")), Some(term("z")));
+            }
 
-            assert_eq!(
-                step(&term("(\\x.x x) y"), EvalMode::CallByValue),
-                Some(term("y y"))
-            );
-        }
-
-        #[test]
-        fn test_step_reduces_left_side_of_application() {
-            assert_eq!(
-                step(&term("((\\f.f) (\\x.x)) y"), EvalMode::CallByValue),
-                Some(term("(\\x.x) y"))
-            );
-
-            assert_eq!(
-                step(&term("(((\\f.f) g) z)"), EvalMode::CallByValue),
-                Some(term("(g z)"))
-            );
-        }
-
-        #[test]
-        fn test_step_call_by_value_reduces_argument() {
-            assert_eq!(step(&term("f ((\\x.x) y)"), EvalMode::CallByValue), None);
-
-            assert_eq!(
-                step(&term("(\\x.z) ((\\y.y) w)"), EvalMode::CallByValue),
-                Some(term("(\\x.z) w"))
-            );
+            #[test]
+            fn test_step_cbn_let_is_lazy() {
+                assert_eq!(step_cbn(&term("let x = ((\\y.y) w) in z")), Some(term("z")));
+            }
         }
     }
 
