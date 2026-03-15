@@ -7,7 +7,7 @@ atom        := IDENT | LPAREN term RPAREN
 let_expr    := LET IDENT EQUAL term IN term
 */
 
-use std::fmt::{write, Debug, Display};
+use std::fmt::{Debug, Display};
 
 use crate::lexer::{Token, TokenKind};
 
@@ -177,6 +177,27 @@ impl Parser {
         self.input.last().map(|token| token.span.end).unwrap_or(0)
     }
 
+    fn expect_or_unexpected(
+        &mut self,
+        kind: TokenKind,
+        expected: &'static str,
+    ) -> Result<(), ParseError> {
+        match self.peek() {
+            Some(token) if token.kind == kind => {
+                self.advance();
+                Ok(())
+            }
+            Some(found) => Err(ParseError::UnexpectedToken {
+                expected,
+                found: found.clone(),
+            }),
+            None => Err(ParseError::UnexpectedEof {
+                expected,
+                pos: self.eof_pos(),
+            }),
+        }
+    }
+
     fn expect(&mut self, kind: TokenKind, expected: &'static str) -> Result<(), ParseError> {
         match self.peek() {
             Some(token) if token.kind == kind => {
@@ -194,72 +215,47 @@ impl Parser {
         }
     }
 
-    fn parse_type_atom(&mut self) -> Result<Type, ParseError> {
+    fn parse_expr_with_parens<T>(
+        &mut self,
+        inner_parser: fn(&mut Parser) -> Result<T, ParseError>,
+        inner_type: &'static str,
+        ident_to_value: fn(String) -> T,
+    ) -> Result<T, ParseError> {
         let token = match self.peek() {
             Some(token) => token,
             None => {
                 return Err(ParseError::MissingToken {
-                    expected: "type",
+                    expected: inner_type,
                     pos: self.eof_pos(),
                 });
             }
         };
 
         match &token.kind {
-            TokenKind::Ident(name) => {
-                let name = name.clone();
-                self.advance();
-                Ok(Type::Var(name))
-            }
+            TokenKind::Ident(_) => Ok(ident_to_value(self.parse_identifier()?)),
             TokenKind::LParen => {
                 self.advance();
-                let ty = self.parse_type()?;
+                let inner = inner_parser(self)?;
                 self.expect(TokenKind::RParen, "')'")?;
-                Ok(ty)
+                Ok(inner)
             }
             TokenKind::EOF => Err(ParseError::MissingToken {
-                expected: "type",
+                expected: inner_type,
                 pos: token.span.start,
             }),
             _ => Err(ParseError::UnexpectedToken {
-                expected: "type",
+                expected: inner_type,
                 found: token.clone(),
             }),
         }
     }
 
-    fn parse_atom(&mut self) -> Result<Term, ParseError> {
-        let token = match self.peek() {
-            Some(token) => token,
-            None => {
-                return Err(ParseError::MissingToken {
-                    expected: "term",
-                    pos: self.eof_pos(),
-                });
-            }
-        };
+    fn parse_type_atom(&mut self) -> Result<Type, ParseError> {
+        self.parse_expr_with_parens(Parser::parse_type, "type", Type::Var)
+    }
 
-        match &token.kind {
-            TokenKind::Ident(name) => {
-                let name = name.clone();
-                self.advance();
-                Ok(Term::Var(name))
-            }
-            TokenKind::LParen => {
-                self.advance();
-                let term = self.parse_term()?;
-                self.expect(TokenKind::RParen, "')'")?;
-                Ok(term)
-            }
-            TokenKind::EOF => Err(ParseError::MissingToken {
-                expected: "term",
-                pos: token.span.start,
-            }),
-            _ => Err(ParseError::UnexpectedToken {
-                expected: "term",
-                found: token.clone(),
-            }),
-        }
+    fn parse_atom(&mut self) -> Result<Term, ParseError> {
+        self.parse_expr_with_parens(Parser::parse_term, "term", Term::Var)
     }
 
     fn is_next_token_atom(&self) -> bool {
@@ -290,48 +286,31 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_lambda(&mut self) -> Result<Term, ParseError> {
+    fn parse_identifier(&mut self) -> Result<String, ParseError> {
         match self.peek() {
-            Some(Token {
-                kind: TokenKind::Lambda,
-                ..
-            }) => self.advance(),
-            Some(found) => {
-                return Err(ParseError::UnexpectedToken {
-                    expected: "lambda",
-                    found: found.clone(),
-                });
-            }
-            None => {
-                return Err(ParseError::UnexpectedEof {
-                    expected: "lambda",
-                    pos: self.eof_pos(),
-                });
-            }
-        }
-
-        let identifier = match self.peek() {
             Some(Token {
                 kind: TokenKind::Ident(name),
                 ..
             }) => {
                 let name = name.clone();
                 self.advance();
-                name
+                Ok(name)
             }
-            Some(found) => {
-                return Err(ParseError::MissingToken {
-                    expected: "identifier",
-                    pos: found.span.start,
-                });
-            }
-            None => {
-                return Err(ParseError::MissingToken {
-                    expected: "identifier",
-                    pos: self.eof_pos(),
-                });
-            }
-        };
+            Some(found) => Err(ParseError::MissingToken {
+                expected: "identifier",
+                pos: found.span.start,
+            }),
+            None => Err(ParseError::MissingToken {
+                expected: "identifier",
+                pos: self.eof_pos(),
+            }),
+        }
+    }
+
+    fn parse_lambda(&mut self) -> Result<Term, ParseError> {
+        self.expect_or_unexpected(TokenKind::Lambda, "lambda")?;
+
+        let identifier = self.parse_identifier()?;
 
         let ty = match self.peek() {
             Some(Token {
@@ -387,92 +366,16 @@ impl Parser {
     }
 
     fn parse_scoped_let_tail(&mut self) -> Result<Term, ParseError> {
-        match self.peek() {
-            Some(Token {
-                kind: TokenKind::In,
-                ..
-            }) => self.advance(),
-            Some(found) => {
-                return Err(ParseError::UnexpectedToken {
-                    expected: "in",
-                    found: found.clone(),
-                });
-            }
-            None => {
-                return Err(ParseError::UnexpectedEof {
-                    expected: "in",
-                    pos: self.eof_pos(),
-                });
-            }
-        }
-
+        self.expect_or_unexpected(TokenKind::In, "in")?;
         self.parse_term()
     }
 
     fn parse_let_head(&mut self) -> Result<(String, Term), ParseError> {
-        match self.peek() {
-            Some(Token {
-                kind: TokenKind::Let,
-                ..
-            }) => self.advance(),
+        self.expect_or_unexpected(TokenKind::Let, "let")?;
 
-            Some(found) => {
-                return Err(ParseError::MissingToken {
-                    expected: "let",
-                    pos: found.span.start,
-                });
-            }
-            None => {
-                return Err(ParseError::UnexpectedEof {
-                    expected: "let",
-                    pos: self.eof_pos(),
-                });
-            }
-        }
+        let name = self.parse_identifier()?;
 
-        let name = match self.peek() {
-            Some(Token {
-                kind: TokenKind::Ident(name),
-                ..
-            }) => {
-                let name = name.clone();
-                self.advance();
-                name
-            }
-
-            Some(found) => {
-                return Err(ParseError::MissingToken {
-                    expected: "identifier",
-                    pos: found.span.start,
-                });
-            }
-            None => {
-                return Err(ParseError::UnexpectedEof {
-                    expected: "identifier",
-                    pos: self.eof_pos(),
-                });
-            }
-        };
-
-        match self.peek() {
-            Some(Token {
-                kind: TokenKind::Equals,
-                ..
-            }) => self.advance(),
-
-            Some(found) => {
-                return Err(ParseError::MissingToken {
-                    expected: "'='",
-                    pos: found.span.start,
-                });
-            }
-            None => {
-                return Err(ParseError::UnexpectedEof {
-                    expected: "'='",
-                    pos: self.eof_pos(),
-                });
-            }
-        }
+        self.expect_or_unexpected(TokenKind::Equals, "'='")?;
 
         let value = self.parse_term()?;
 
@@ -553,8 +456,8 @@ pub fn parse_term(input: Vec<Token>) -> Result<Term, ParseError> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        lexer::{lex, Span, Token},
-        parser::{parse, parse_term, ParseError, Statement, Term},
+        lexer::{Span, Token, lex},
+        parser::{ParseError, Statement, Term, parse, parse_term},
     };
 
     fn lex_and_parse(input: &str) -> Term {

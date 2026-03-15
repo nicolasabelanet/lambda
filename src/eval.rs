@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     lexer::{LexError, lex},
-    parser::{ParseError, Statement, Term, parse, parse_term},
+    parser::{ParseError, Statement, Term, Type, parse, parse_term},
 };
 
 #[derive(Debug)]
@@ -22,6 +22,12 @@ impl std::fmt::Display for EvalError {
             }
         }
     }
+}
+
+#[derive(PartialEq)]
+pub enum EvalMode {
+    CallByName,
+    CallByValue,
 }
 
 impl From<LexError> for EvalError {
@@ -132,22 +138,22 @@ fn resolve_impl(term: &Term, env: &HashMap<String, Term>, bound: &mut HashSet<St
     }
 }
 
-pub fn evaluate(input: &str) -> Result<Term, EvalError> {
+pub fn evaluate(input: &str, eval_mode: EvalMode) -> Result<Term, EvalError> {
     let tokens = lex(input)?;
     let ast = parse_term(tokens)?;
-    normalize(&ast)
+    normalize(&ast, eval_mode)
 }
 
-fn normalize(term: &Term) -> Result<Term, EvalError> {
-    normalize_with_limit(term, 1_000)
+fn normalize(term: &Term, eval_mode: EvalMode) -> Result<Term, EvalError> {
+    normalize_with_limit(term, 1_000, eval_mode)
 }
 
-fn normalize_with_limit(term: &Term, limit: u32) -> Result<Term, EvalError> {
+fn normalize_with_limit(term: &Term, limit: u32, eval_mode: EvalMode) -> Result<Term, EvalError> {
     let mut current = term.clone();
 
     let mut steps: u32 = 0;
 
-    while let Some(reduced) = step(&current) {
+    while let Some(reduced) = step(&current, EvalMode::CallByValue) {
         if steps >= limit {
             return Err(EvalError::StepLimit { limit });
         }
@@ -159,10 +165,24 @@ fn normalize_with_limit(term: &Term, limit: u32) -> Result<Term, EvalError> {
 }
 
 fn is_value(term: &Term) -> bool {
-    matches!(term, Term::Var(_) | Term::Lambda(_, _, _))
+    matches!(term, Term::Lambda(_, _, _))
 }
 
-fn step(term: &Term) -> Option<Term> {
+fn step_cbn(term: &Term) -> Option<Term> {
+    match term {
+        Term::Var(_) => None,
+        Term::Lambda(_, _, _) => None,
+        Term::Let { name, value, body } => Some(substitute(body, name, value)),
+        Term::Application(left, right) => match left.as_ref() {
+            Term::Lambda(param, _, body) => Some(substitute(body, param, right)),
+            _ => {
+                step_cbn(left).map(|new_left| Term::Application(Box::new(new_left), right.clone()))
+            }
+        },
+    }
+}
+
+fn step_cbv(term: &Term) -> Option<Term> {
     match term {
         Term::Var(_) => None,
         Term::Lambda(_, _, _) => None,
@@ -170,24 +190,38 @@ fn step(term: &Term) -> Option<Term> {
             if is_value(value) {
                 Some(substitute(body, name, value))
             } else {
-                step(value).map(|new_value| Term::Let {
+                step_cbv(value).map(|new_value| Term::Let {
                     name: name.clone(),
                     value: Box::new(new_value),
                     body: body.clone(),
                 })
             }
         }
-        Term::Application(left, right) => match left.as_ref() {
-            Term::Lambda(param, _, body) => {
+        Term::Application(left, right) => {
+            if let Some(new_left) = step_cbv(left) {
+                return Some(Term::Application(Box::new(new_left), right.clone()));
+            }
+
+            if let Term::Lambda(param, _, body) = left.as_ref() {
+                if let Some(new_right) = step(right, EvalMode::CallByValue) {
+                    return Some(Term::Application(left.clone(), Box::new(new_right)));
+                }
+
                 if is_value(right) {
-                    Some(substitute(body, param, right))
-                } else {
-                    step(right)
-                        .map(|new_right| Term::Application(left.clone(), Box::new(new_right)))
+                    return Some(substitute(body, param, right));
                 }
             }
-            _ => step(left).map(|new_left| Term::Application(Box::new(new_left), right.clone())),
-        },
+
+            None
+        }
+    }
+}
+
+fn step(term: &Term, eval_mode: EvalMode) -> Option<Term> {
+    if eval_mode == EvalMode::CallByName {
+        step_cbn(term)
+    } else {
+        step_cbv(term)
     }
 }
 
@@ -286,11 +320,11 @@ fn capture_avoiding_clone(term: &Term, avoid: &HashSet<String>) -> Term {
     }
 }
 
-fn update_lambda(lambda: &Term, new: &str) -> Term {
+fn update_lambda(lambda: &Term, new: &str) -> (String, Option<Type>, Term) {
     match lambda {
         Term::Lambda(param, t, body) => {
             let renamed_body = rename(body, param, new);
-            Term::Lambda(new.to_string(), t.clone(), Box::new(renamed_body))
+            (new.to_string(), t.clone(), renamed_body)
         }
         _ => unreachable!("update_lambda called on non lambda"),
     }
@@ -304,9 +338,9 @@ fn create_fresh_name(base: &str, used: &HashSet<String>) -> String {
     let mut i: i32 = 1;
 
     loop {
-        let cantidate = format!("{base}{i}");
-        if !used.contains(&cantidate) {
-            return cantidate;
+        let candidate = format!("{base}{i}");
+        if !used.contains(&candidate) {
+            return candidate;
         }
         i += 1;
     }
@@ -336,6 +370,8 @@ fn free_vars(term: &Term) -> HashSet<String> {
 }
 
 pub fn substitute(term: &Term, var: &str, replacement: &Term) -> Term {
+    let free_replacement = free_vars(replacement);
+
     match term {
         Term::Var(name) => {
             if name == var {
@@ -350,7 +386,6 @@ pub fn substitute(term: &Term, var: &str, replacement: &Term) -> Term {
             Term::Application(Box::new(new_left), Box::new(new_right))
         }
         Term::Lambda(param, t, body) => {
-            let free_replacement = free_vars(replacement);
             let free_body = free_vars(body);
             if param == var || !free_body.contains(var) {
                 term.clone()
@@ -366,14 +401,12 @@ pub fn substitute(term: &Term, var: &str, replacement: &Term) -> Term {
                 used.insert(param.clone());
                 used.insert(var.to_string());
                 let fresh_name = create_fresh_name(param, &used);
-                match update_lambda(term, &fresh_name) {
-                    Term::Lambda(new_param, t, new_body) => Term::Lambda(
-                        new_param,
-                        t.clone(),
-                        Box::new(substitute(&new_body, var, replacement)),
-                    ),
-                    _ => unreachable!(),
-                }
+                let (new_param, t, new_body) = update_lambda(term, &fresh_name);
+                Term::Lambda(
+                    new_param,
+                    t.clone(),
+                    Box::new(substitute(&new_body, var, replacement)),
+                )
             }
         }
         Term::Let { name, value, body } => {
@@ -384,26 +417,23 @@ pub fn substitute(term: &Term, var: &str, replacement: &Term) -> Term {
                     value: Box::new(new_value),
                     body: body.clone(),
                 }
+            } else if free_replacement.contains(name) {
+                let mut used = free_replacement;
+                used.extend(free_vars(body));
+                used.insert(name.clone());
+                used.insert(var.to_string());
+                let fresh_name = create_fresh_name(name, &used);
+                let renamed_body = rename(body, name, &fresh_name);
+                Term::Let {
+                    name: fresh_name.clone(),
+                    value: Box::new(new_value),
+                    body: Box::new(substitute(&renamed_body, var, replacement)),
+                }
             } else {
-                let free_replacement = free_vars(replacement);
-                if free_replacement.contains(name) {
-                    let mut used = free_replacement;
-                    used.extend(free_vars(body));
-                    used.insert(name.clone());
-                    used.insert(var.to_string());
-                    let fresh_name = create_fresh_name(name, &used);
-                    let renamed_body = rename(body, name, &fresh_name);
-                    Term::Let {
-                        name: fresh_name.clone(),
-                        value: Box::new(new_value),
-                        body: Box::new(substitute(&renamed_body, var, replacement)),
-                    }
-                } else {
-                    Term::Let {
-                        name: name.clone(),
-                        value: Box::new(new_value),
-                        body: Box::new(substitute(body, var, replacement)),
-                    }
+                Term::Let {
+                    name: name.clone(),
+                    value: Box::new(new_value),
+                    body: Box::new(substitute(body, var, replacement)),
                 }
             }
         }
