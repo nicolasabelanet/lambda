@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use crate::{
     eval::{EvalError, EvalMode, normalize_with_limit, resolve},
     lexer::lex,
-    parser::{Statement, Term, parse, stmt, term},
+    parser::{Statement, Term, parse},
+    util::term,
 };
 
 fn stdlib() -> HashMap<String, Term> {
@@ -56,7 +57,7 @@ impl Interpreter {
 #[cfg(test)]
 mod tests {
     mod test_global_let {
-        use crate::{eval::EvalMode, interpreter::Interpreter, parser::term};
+        use crate::{eval::EvalMode, interpreter::Interpreter, util::term};
 
         #[test]
         fn test_interpreter_global_let() {
