@@ -7,6 +7,8 @@ pub enum TokenKind {
     In,
     LParen,
     RParen,
+    Arrow,
+    Colon,
     Ident(String),
     EOF,
 }
@@ -105,6 +107,38 @@ impl Lexer {
                     },
                 })
             }
+            Some(':') => {
+                self.advance();
+                Ok(Token {
+                    kind: TokenKind::Colon,
+                    span: Span {
+                        start,
+                        end: self.pos,
+                    },
+                })
+            }
+            Some('-') => {
+                let next = self.peek_n(1);
+                if next == Some('>') {
+                    self.advance();
+                    self.advance();
+                    Ok(Token {
+                        kind: TokenKind::Arrow,
+                        span: Span {
+                            start,
+                            end: self.pos,
+                        },
+                    })
+                } else {
+                    Err(LexError::InvalidChar {
+                        ch: '-',
+                        span: Span {
+                            start,
+                            end: self.pos + 1,
+                        },
+                    })
+                }
+            }
             Some('.') => {
                 self.advance();
                 Ok(Token {
@@ -162,11 +196,11 @@ impl Lexer {
         }
     }
 
-    fn peek(&self) -> Option<char> {
-        if self.pos >= self.input.len() {
-            return None;
-        }
+    fn peek_n(&self, offset: usize) -> Option<char> {
+        self.input.get(self.pos + offset).copied()
+    }
 
+    fn peek(&self) -> Option<char> {
         self.input.get(self.pos).copied()
     }
 
@@ -415,6 +449,21 @@ mod tests {
                 TokenKind::Ident("x".into()),
                 TokenKind::RParen,
                 TokenKind::Ident("y".into()),
+                TokenKind::EOF,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_colon_and_arrow_tokens() {
+        assert_eq!(
+            kinds(lex("x: A -> B").unwrap()),
+            vec![
+                TokenKind::Ident("x".into()),
+                TokenKind::Colon,
+                TokenKind::Ident("A".into()),
+                TokenKind::Arrow,
+                TokenKind::Ident("B".into()),
                 TokenKind::EOF,
             ]
         );

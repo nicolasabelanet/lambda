@@ -13,7 +13,7 @@ use crate::lexer::{Token, TokenKind};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Term {
-    Lambda(String, Box<Term>),
+    Lambda(String, Option<Type>, Box<Term>),
     Application(Box<Term>, Box<Term>),
     Var(String),
     Let {
@@ -21,6 +21,12 @@ pub enum Term {
         value: Box<Term>,
         body: Box<Term>,
     },
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Type {
+    Var(String),
+    Arrow(Box<Type>, Box<Type>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -98,7 +104,7 @@ impl Display for Term {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Term::Var(name) => write!(f, "{name}"),
-            Term::Lambda(name, body) => {
+            Term::Lambda(name, _, body) => {
                 let string_body = body.to_string();
                 write!(f, "\\{name}.{}", string_body)
             }
@@ -108,13 +114,13 @@ impl Display for Term {
             Term::Application(left, right) => {
                 let mut left_string = left.to_string();
 
-                if let Term::Lambda(_, _) = **left {
+                if let Term::Lambda(_, _, _) = **left {
                     left_string = format!("({})", left_string);
                 }
 
                 let mut right_string = right.to_string();
 
-                if let Term::Lambda(_, _) | Term::Application(_, _) = **right {
+                if let Term::Lambda(_, _, _) | Term::Application(_, _) = **right {
                     right_string = format!("({})", right_string);
                 }
                 write!(f, "{left_string} {right_string}")
@@ -149,6 +155,55 @@ impl Parser {
 
     fn eof_pos(&self) -> usize {
         self.input.last().map(|token| token.span.end).unwrap_or(0)
+    }
+
+    fn parse_type_atom(&mut self) -> Result<Type, ParseError> {
+        let token = match self.peek() {
+            Some(token) => token,
+            None => {
+                return Err(ParseError::MissingToken {
+                    expected: "type",
+                    pos: self.eof_pos(),
+                });
+            }
+        };
+
+        match &token.kind {
+            TokenKind::Ident(name) => {
+                let name = name.clone();
+                self.advance();
+                Ok(Type::Var(name))
+            }
+            TokenKind::LParen => {
+                self.advance();
+                let term = self.parse_type()?;
+                match self.peek() {
+                    Some(Token {
+                        kind: TokenKind::RParen,
+                        ..
+                    }) => {
+                        self.advance();
+                        Ok(term)
+                    }
+                    Some(found) => Err(ParseError::MissingToken {
+                        expected: "')'",
+                        pos: found.span.start,
+                    }),
+                    None => Err(ParseError::MissingToken {
+                        expected: "')'",
+                        pos: self.eof_pos(),
+                    }),
+                }
+            }
+            TokenKind::EOF => Err(ParseError::MissingToken {
+                expected: "type",
+                pos: token.span.start,
+            }),
+            _ => Err(ParseError::UnexpectedToken {
+                expected: "type",
+                found: token.clone(),
+            }),
+        }
     }
 
     fn parse_atom(&mut self) -> Result<Term, ParseError> {
@@ -271,11 +326,23 @@ impl Parser {
             }
         };
 
+        let ty = match self.peek() {
+            Some(Token {
+                kind: TokenKind::Colon,
+                ..
+            }) => {
+                self.advance();
+                Some(self.parse_type()?)
+            }
+            _ => None,
+        };
+
         match self.peek() {
             Some(Token {
                 kind: TokenKind::Dot,
                 ..
             }) => self.advance(),
+
             Some(found) => {
                 return Err(ParseError::MissingToken {
                     expected: "'.'",
@@ -292,7 +359,23 @@ impl Parser {
 
         let body = self.parse_term()?;
 
-        Ok(Term::Lambda(identifier, Box::new(body)))
+        Ok(Term::Lambda(identifier, ty, Box::new(body)))
+    }
+
+    fn parse_type(&mut self) -> Result<Type, ParseError> {
+        let left = self.parse_type_atom()?;
+
+        if let Some(Token {
+            kind: TokenKind::Arrow,
+            ..
+        }) = self.peek()
+        {
+            self.advance();
+            let right = self.parse_type()?;
+            Ok(Type::Arrow(Box::new(left), Box::new(right)))
+        } else {
+            Ok(left)
+        }
     }
 
     fn parse_term(&mut self) -> Result<Term, ParseError> {

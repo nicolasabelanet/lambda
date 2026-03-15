@@ -107,11 +107,11 @@ fn resolve_impl(term: &Term, env: &HashMap<String, Term>, bound: &mut HashSet<St
                 term.clone()
             }
         }
-        Term::Lambda(param, body) => {
+        Term::Lambda(param, t, body) => {
             bound.insert(param.clone());
             let body = resolve_impl(body, env, bound);
             bound.remove(param);
-            Term::Lambda(param.clone(), Box::new(body))
+            Term::Lambda(param.clone(), t.clone(), Box::new(body))
         }
         Term::Application(left, right) => {
             let left = resolve_impl(left, env, bound);
@@ -159,13 +159,13 @@ fn normalize_with_limit(term: &Term, limit: u32) -> Result<Term, EvalError> {
 }
 
 fn is_value(term: &Term) -> bool {
-    matches!(term, Term::Var(_) | Term::Lambda(_, _))
+    matches!(term, Term::Var(_) | Term::Lambda(_, _, _))
 }
 
 fn step(term: &Term) -> Option<Term> {
     match term {
         Term::Var(_) => None,
-        Term::Lambda(_, _) => None,
+        Term::Lambda(_, _, _) => None,
         Term::Let { name, value, body } => {
             if is_value(value) {
                 Some(substitute(body, name, value))
@@ -178,7 +178,7 @@ fn step(term: &Term) -> Option<Term> {
             }
         }
         Term::Application(left, right) => match left.as_ref() {
-            Term::Lambda(param, body) => {
+            Term::Lambda(param, _, body) => {
                 if is_value(right) {
                     Some(substitute(body, param, right))
                 } else {
@@ -204,11 +204,11 @@ fn rename(term: &Term, old: &str, new: &str) -> Term {
             Box::new(rename(left, old, new)),
             Box::new(rename(right, old, new)),
         ),
-        Term::Lambda(param, body) => {
+        Term::Lambda(param, t, body) => {
             if param == old {
                 term.clone()
             } else {
-                Term::Lambda(param.clone(), Box::new(rename(body, old, new)))
+                Term::Lambda(param.clone(), t.clone(), Box::new(rename(body, old, new)))
             }
         }
         Term::Let { name, value, body } => {
@@ -236,7 +236,7 @@ fn capture_avoiding_clone(term: &Term, avoid: &HashSet<String>) -> Term {
             Box::new(capture_avoiding_clone(left, avoid)),
             Box::new(capture_avoiding_clone(right, avoid)),
         ),
-        Term::Lambda(param, body) => {
+        Term::Lambda(param, t, body) => {
             if avoid.contains(param) {
                 let mut used = avoid.clone();
                 used.extend(free_vars(body));
@@ -246,6 +246,7 @@ fn capture_avoiding_clone(term: &Term, avoid: &HashSet<String>) -> Term {
                 next_avoid.insert(fresh.clone());
                 Term::Lambda(
                     fresh,
+                    t.clone(),
                     Box::new(capture_avoiding_clone(&renamed_body, &next_avoid)),
                 )
             } else {
@@ -253,6 +254,7 @@ fn capture_avoiding_clone(term: &Term, avoid: &HashSet<String>) -> Term {
                 next_avoid.insert(param.clone());
                 Term::Lambda(
                     param.clone(),
+                    t.clone(),
                     Box::new(capture_avoiding_clone(body, &next_avoid)),
                 )
             }
@@ -286,9 +288,9 @@ fn capture_avoiding_clone(term: &Term, avoid: &HashSet<String>) -> Term {
 
 fn update_lambda(lambda: &Term, new: &str) -> Term {
     match lambda {
-        Term::Lambda(param, body) => {
+        Term::Lambda(param, t, body) => {
             let renamed_body = rename(body, param, new);
-            Term::Lambda(new.to_string(), Box::new(renamed_body))
+            Term::Lambda(new.to_string(), t.clone(), Box::new(renamed_body))
         }
         _ => unreachable!("update_lambda called on non lambda"),
     }
@@ -318,7 +320,7 @@ fn free_vars(term: &Term) -> HashSet<String> {
             vars.extend(free_vars(right));
             vars
         }
-        Term::Lambda(name, body) => {
+        Term::Lambda(name, _, body) => {
             let mut body_vars = free_vars(body);
             body_vars.remove(name);
             body_vars
@@ -347,13 +349,13 @@ pub fn substitute(term: &Term, var: &str, replacement: &Term) -> Term {
             let new_right = substitute(right, var, replacement);
             Term::Application(Box::new(new_left), Box::new(new_right))
         }
-        Term::Lambda(param, body) => {
+        Term::Lambda(param, t, body) => {
             let free_replacement = free_vars(replacement);
             let free_body = free_vars(body);
             if param == var || !free_body.contains(var) {
                 term.clone()
             } else if !free_replacement.contains(param) {
-                Term::Lambda(param.clone(), Box::new(substitute(body, var, replacement)))
+                Term::Lambda(param.clone(), t.clone(), Box::new(substitute(body, var, replacement)))
             } else {
                 let mut used = free_replacement;
                 used.extend(free_body);
@@ -361,8 +363,8 @@ pub fn substitute(term: &Term, var: &str, replacement: &Term) -> Term {
                 used.insert(var.to_string());
                 let fresh_name = create_fresh_name(param, &used);
                 match update_lambda(term, &fresh_name) {
-                    Term::Lambda(new_param, new_body) => {
-                        Term::Lambda(new_param, Box::new(substitute(&new_body, var, replacement)))
+                    Term::Lambda(new_param, t, new_body) => {
+                        Term::Lambda(new_param, t.clone(), Box::new(substitute(&new_body, var, replacement)))
                     }
                     _ => unreachable!(),
                 }
