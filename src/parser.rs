@@ -9,7 +9,7 @@ let_expr    := LET IDENT EQUAL term IN term
 
 use std::fmt::{Debug, Display};
 
-use crate::lexer::{Token, TokenKind};
+use crate::lexer::{Token, TokenKind, lex};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Term {
@@ -147,6 +147,14 @@ impl Display for Term {
             }
         }
     }
+}
+
+pub fn stmt(input: &str) -> Statement {
+    parse(lex(input).unwrap()).unwrap()
+}
+
+pub fn term(input: &str) -> Term {
+    parse_term(lex(input).unwrap()).unwrap()
 }
 
 struct Parser {

@@ -2,7 +2,8 @@ use rustyline::DefaultEditor;
 
 use crate::{
     diagnostic::format_span_error,
-    eval::{EvalError, EvalMode, Interpreter},
+    eval::{EvalError, EvalMode},
+    interpreter::{Interpreter}
 };
 
 pub fn repl() {

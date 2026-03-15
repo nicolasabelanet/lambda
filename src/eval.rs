@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     lexer::{LexError, lex},
-    parser::{ParseError, Statement, Term, Type, parse, parse_term},
+    parser::{ParseError, Term, Type, parse_term},
 };
 
 #[derive(Debug)]
@@ -39,58 +39,6 @@ impl From<LexError> for EvalError {
 impl From<ParseError> for EvalError {
     fn from(err: ParseError) -> Self {
         EvalError::Parse(err)
-    }
-}
-
-pub struct Interpreter {
-    env: HashMap<String, Term>,
-    step_limit: u32,
-    eval_mode: EvalMode,
-}
-
-fn ast(input: &str) -> Term {
-    parse_term(lex(input).unwrap()).unwrap()
-}
-
-fn stdlib() -> HashMap<String, Term> {
-    HashMap::from_iter([
-        ("true".to_string(), ast("\\t.\\f.t")),
-        ("false".to_string(), ast("\\t.\\f.f")),
-        ("if".to_string(), ast("\\b.\\t.\\f. b t f")),
-        ("and".to_string(), ast("\\p.\\q. p q p")),
-        ("or".to_string(), ast("\\p.\\q. p p q")),
-        ("not".to_string(), ast("\\p. p false true")),
-    ])
-}
-
-impl Interpreter {
-    pub fn new(eval_mode: EvalMode) -> Self {
-        Interpreter {
-            env: stdlib(),
-            step_limit: 1_000,
-            eval_mode,
-        }
-    }
-
-    pub fn eval_statement(&mut self, input: &str) -> Result<Option<Term>, EvalError> {
-        let ast = parse(lex(input)?)?;
-
-        match ast {
-            Statement::Let(name, term) => {
-                let resolved = resolve(&term, &self.env);
-                self.env.insert(
-                    name,
-                    normalize_with_limit(&resolved, self.step_limit, self.eval_mode)?,
-                );
-                Ok(None)
-            }
-            Statement::Expr(term) => {
-                let resolved = resolve(&term, &self.env);
-                let result = normalize_with_limit(&resolved, self.step_limit, self.eval_mode)?;
-                self.env.insert("_".to_string(), result.clone());
-                Ok(Some(result))
-            }
-        }
     }
 }
 
@@ -138,15 +86,19 @@ fn resolve_impl(term: &Term, env: &HashMap<String, Term>, bound: &mut HashSet<St
 
 pub fn evaluate(input: &str, eval_mode: EvalMode) -> Result<Term, EvalError> {
     let tokens = lex(input)?;
-    let ast = parse_term(tokens)?;
-    normalize(&ast, eval_mode)
+    let term = parse_term(tokens)?;
+    normalize(&term, eval_mode)
 }
 
-fn normalize(term: &Term, eval_mode: EvalMode) -> Result<Term, EvalError> {
+pub fn normalize(term: &Term, eval_mode: EvalMode) -> Result<Term, EvalError> {
     normalize_with_limit(term, 1_000, eval_mode)
 }
 
-fn normalize_with_limit(term: &Term, limit: u32, eval_mode: EvalMode) -> Result<Term, EvalError> {
+pub fn normalize_with_limit(
+    term: &Term,
+    limit: u32,
+    eval_mode: EvalMode,
+) -> Result<Term, EvalError> {
     let mut current = term.clone();
 
     let mut steps: u32 = 0;
@@ -156,6 +108,7 @@ fn normalize_with_limit(term: &Term, limit: u32, eval_mode: EvalMode) -> Result<
             return Err(EvalError::StepLimit { limit });
         }
         steps += 1;
+        println!("{steps}: {}", &reduced);
         current = reduced;
     }
 
@@ -163,7 +116,7 @@ fn normalize_with_limit(term: &Term, limit: u32, eval_mode: EvalMode) -> Result<
 }
 
 fn is_value(term: &Term) -> bool {
-    matches!(term, Term::Lambda(_, _, _))
+    matches!(term, Term::Var(_) | Term::Lambda(_, _, _))
 }
 
 fn step_cbn(term: &Term) -> Option<Term> {
@@ -444,14 +397,14 @@ mod tests {
 
     use crate::{
         eval::{
-            Interpreter, create_fresh_name, free_vars, normalize, rename, step, substitute,
+            EvalMode, create_fresh_name, free_vars, normalize, rename, step, substitute,
             update_lambda,
         },
         lexer::lex,
         parser::{Term, parse_term},
     };
 
-    fn ast(input: &str) -> Term {
+    fn term(input: &str) -> Term {
         parse_term(lex(input).unwrap()).unwrap()
     }
 
@@ -460,57 +413,76 @@ mod tests {
         use super::*;
         #[test]
         fn test_normalize_respects_capture_avoidance() {
-            assert_eq!(normalize(&ast("(\\x.\\y.x) y")).unwrap(), ast("\\y1.y"));
+            assert_eq!(
+                normalize(&term("(\\x.\\y.x) y"), EvalMode::CallByValue).unwrap(),
+                term("\\y1.y")
+            );
 
             assert_eq!(
-                normalize(&ast("(\\x.\\y.x y) y")).unwrap(),
-                ast("\\y1.y y1")
+                normalize(&term("(\\x.\\y.x y) y"), EvalMode::CallByValue).unwrap(),
+                term("\\y1.y y1")
             );
         }
 
         #[test]
         fn test_normalize_simple() {
-            assert_eq!(normalize(&ast("(\\x.x) y")).unwrap(), ast("y"));
+            assert_eq!(
+                normalize(&term("(\\x.x) y"), EvalMode::CallByValue).unwrap(),
+                term("y")
+            );
 
-            assert_eq!(normalize(&ast("(\\x.\\y.x) a")).unwrap(), ast("\\y.a"));
+            assert_eq!(
+                normalize(&term("(\\x.\\y.x) a"), EvalMode::CallByValue).unwrap(),
+                term("\\y.a")
+            );
 
-            assert_eq!(normalize(&ast("(\\x.x x) y")).unwrap(), ast("y y"));
+            assert_eq!(
+                normalize(&term("(\\x.x x) y"), EvalMode::CallByValue).unwrap(),
+                term("y y")
+            );
         }
 
         #[test]
         fn test_normalize_let() {
-            assert_eq!(normalize(&ast("let id = \\x.x in id y")).unwrap(), ast("y"));
             assert_eq!(
-                normalize(&ast("let x = a in let x = b in x")).unwrap(),
-                ast("b")
+                normalize(&term("let id = \\x.x in id y"), EvalMode::CallByValue).unwrap(),
+                term("y")
+            );
+            assert_eq!(
+                normalize(&term("let x = a in let x = b in x"), EvalMode::CallByValue).unwrap(),
+                term("b")
             );
         }
 
         #[test]
         fn test_normalize_multiple_steps() {
-            assert_eq!(normalize(&ast("((\\f.f) (\\x.x)) y")).unwrap(), ast("y"));
+            assert_eq!(
+                normalize(&term("((\\f.f) (\\x.x)) y"), EvalMode::CallByValue).unwrap(),
+                term("y")
+            );
 
-            assert_eq!(normalize(&ast("(\\x.\\y.x) a b")).unwrap(), ast("a"));
+            assert_eq!(
+                normalize(&term("(\\x.\\y.x) a b"), EvalMode::CallByValue).unwrap(),
+                term("a")
+            );
 
-            assert_eq!(normalize(&ast("(\\f.\\x.f x) g z")).unwrap(), ast("g z"));
+            assert_eq!(
+                normalize(&term("(\\f.\\x.f x) g z"), EvalMode::CallByValue).unwrap(),
+                term("g z")
+            );
         }
 
         #[test]
         fn test_normalize_under_call_by_name() {
-            assert_eq!(normalize(&ast("(\\x.z) ((\\y.y) w)")).unwrap(), ast("z"));
+            assert_eq!(
+                normalize(&term("(\\x.z) ((\\y.y) w)"), EvalMode::CallByName).unwrap(),
+                term("z")
+            );
 
-            assert_eq!(normalize(&ast("(\\x.x) ((\\y.y) z)")).unwrap(), ast("z"));
-        }
-    }
-
-    mod test_global_let {
-        use super::*;
-
-        #[test]
-        fn test_interpreter_global_let() {
-            let mut interpreter = Interpreter::new();
-            assert_eq!(interpreter.eval_statement("let id = \\x.x").unwrap(), None);
-            assert_eq!(interpreter.eval_statement("id z").unwrap(), Some(ast("z")));
+            assert_eq!(
+                normalize(&term("(\\x.x) ((\\y.y) z)"), EvalMode::CallByName).unwrap(),
+                term("z")
+            );
         }
     }
 
@@ -519,41 +491,65 @@ mod tests {
 
         #[test]
         fn test_simple_step() {
-            assert_eq!(step(&ast("x")), None);
-            assert_eq!(step(&ast("\\x.x")), None);
-            assert_eq!(step(&ast("(\\x.x) y")), Some(ast("y")));
-            assert_eq!(step(&ast("((\\f.f) (\\x.x)) y")), Some(ast("(\\x.x) y")));
-            assert_eq!(step(&ast("f ((\\x.x) y)")), None);
+            assert_eq!(step(&term("x"), EvalMode::CallByValue), None);
+            assert_eq!(step(&term("\\x.x"), EvalMode::CallByValue), None);
+            assert_eq!(
+                step(&term("(\\x.x) y"), EvalMode::CallByValue),
+                Some(term("y"))
+            );
+            assert_eq!(
+                step(&term("((\\f.f) (\\x.x)) y"), EvalMode::CallByValue),
+                Some(term("(\\x.x) y"))
+            );
+            assert_eq!(step(&term("f ((\\x.x) y)"), EvalMode::CallByValue), None);
         }
 
         #[test]
         fn test_step_stuck_terms() {
-            assert_eq!(step(&ast("x")), None);
-            assert_eq!(step(&ast("\\x.x")), None);
-            assert_eq!(step(&ast("f x")), None);
+            assert_eq!(step(&term("x"), EvalMode::CallByValue), None);
+            assert_eq!(step(&term("\\x.x"), EvalMode::CallByValue), None);
+            assert_eq!(step(&term("f x"), EvalMode::CallByValue), None);
         }
 
         #[test]
         fn test_step_simple_beta() {
-            assert_eq!(step(&ast("(\\x.x) y")), Some(ast("y")));
+            assert_eq!(
+                step(&term("(\\x.x) y"), EvalMode::CallByValue),
+                Some(term("y"))
+            );
 
-            assert_eq!(step(&ast("(\\x.\\y.x) a")), Some(ast("\\y.a")));
+            assert_eq!(
+                step(&term("(\\x.\\y.x) a"), EvalMode::CallByValue),
+                Some(term("\\y.a"))
+            );
 
-            assert_eq!(step(&ast("(\\x.x x) y")), Some(ast("y y")));
+            assert_eq!(
+                step(&term("(\\x.x x) y"), EvalMode::CallByValue),
+                Some(term("y y"))
+            );
         }
 
         #[test]
         fn test_step_reduces_left_side_of_application() {
-            assert_eq!(step(&ast("((\\f.f) (\\x.x)) y")), Some(ast("(\\x.x) y")));
+            assert_eq!(
+                step(&term("((\\f.f) (\\x.x)) y"), EvalMode::CallByValue),
+                Some(term("(\\x.x) y"))
+            );
 
-            assert_eq!(step(&ast("(((\\f.f) g) z)")), Some(ast("(g z)")));
+            assert_eq!(
+                step(&term("(((\\f.f) g) z)"), EvalMode::CallByValue),
+                Some(term("(g z)"))
+            );
         }
 
         #[test]
-        fn test_step_call_by_name_does_not_reduce_argument() {
-            assert_eq!(step(&ast("f ((\\x.x) y)")), None);
+        fn test_step_call_by_value_reduces_argument() {
+            assert_eq!(step(&term("f ((\\x.x) y)"), EvalMode::CallByValue), None);
 
-            assert_eq!(step(&ast("(\\x.z) ((\\y.y) w)")), Some(ast("(\\x.z) w")));
+            assert_eq!(
+                step(&term("(\\x.z) ((\\y.y) w)"), EvalMode::CallByValue),
+                Some(term("(\\x.z) w"))
+            );
         }
     }
 
@@ -574,13 +570,13 @@ mod tests {
                     ),
                     "y1",
                 ),
-                Term::Lambda(
+                (
                     "y1".into(),
                     None,
-                    Box::new(Term::Application(
+                    Term::Application(
                         Box::new(Term::Var("x".into())),
                         Box::new(Term::Var("y1".into()))
-                    ))
+                    )
                 )
             );
             assert_eq!(
@@ -596,14 +592,10 @@ mod tests {
                     ),
                     "y1",
                 ),
-                Term::Lambda(
+                (
                     "y1".into(),
                     None,
-                    Box::new(Term::Lambda(
-                        "y".into(),
-                        None,
-                        Box::new(Term::Var("y".into()))
-                    ))
+                    Term::Lambda("y".into(), None, Box::new(Term::Var("y".into())))
                 ),
             );
         }
@@ -689,202 +681,220 @@ mod tests {
 
         #[test]
         fn test_simple() {
-            assert_eq!(substitute(&ast("x"), "x", &ast("y")), ast("y"));
-            assert_eq!(substitute(&ast("z"), "x", &ast("y")), ast("z"));
+            assert_eq!(substitute(&term("x"), "x", &term("y")), term("y"));
+            assert_eq!(substitute(&term("z"), "x", &term("y")), term("z"));
 
-            assert_eq!(substitute(&ast("x z"), "x", &ast("y")), ast("y z"));
+            assert_eq!(substitute(&term("x z"), "x", &term("y")), term("y z"));
 
-            assert_eq!(substitute(&ast("x x"), "x", &ast("y")), ast("y y"));
+            assert_eq!(substitute(&term("x x"), "x", &term("y")), term("y y"));
 
-            assert_eq!(substitute(&ast("x y"), "x", &ast("f z")), ast("(f z) y"));
+            assert_eq!(substitute(&term("x y"), "x", &term("f z")), term("(f z) y"));
 
             assert_eq!(
-                substitute(&ast("f x"), "x", &ast("\\z.z")),
-                ast("f (\\z.z)")
+                substitute(&term("f x"), "x", &term("\\z.z")),
+                term("f (\\z.z)")
             );
         }
 
         #[test]
         fn test_substitute_shadowing() {
-            assert_eq!(substitute(&ast("\\x.x"), "x", &ast("y")), ast("\\x.x"));
-
-            assert_eq!(substitute(&ast("\\x.x z"), "x", &ast("y")), ast("\\x.x z"));
-
-            assert_eq!(substitute(&ast("\\z.x"), "x", &ast("y")), ast("\\z.y"));
-
-            assert_eq!(substitute(&ast("\\z.x z"), "x", &ast("y")), ast("\\z.y z"));
+            assert_eq!(substitute(&term("\\x.x"), "x", &term("y")), term("\\x.x"));
 
             assert_eq!(
-                substitute(&ast("\\z.(\\x.x) x"), "x", &ast("y")),
-                ast("\\z.(\\x.x) y")
+                substitute(&term("\\x.x z"), "x", &term("y")),
+                term("\\x.x z")
+            );
+
+            assert_eq!(substitute(&term("\\z.x"), "x", &term("y")), term("\\z.y"));
+
+            assert_eq!(
+                substitute(&term("\\z.x z"), "x", &term("y")),
+                term("\\z.y z")
+            );
+
+            assert_eq!(
+                substitute(&term("\\z.(\\x.x) x"), "x", &term("y")),
+                term("\\z.(\\x.x) y")
             );
         }
 
         #[test]
         fn test_substitute_capture_avoidance_simple() {
-            assert_eq!(substitute(&ast("\\y.x"), "x", &ast("y1")), ast("\\y.y1"));
+            assert_eq!(substitute(&term("\\y.x"), "x", &term("y1")), term("\\y.y1"));
 
-            assert_eq!(substitute(&ast("\\y.x"), "x", &ast("y")), ast("\\y1.y"));
+            assert_eq!(substitute(&term("\\y.x"), "x", &term("y")), term("\\y1.y"));
 
             assert_eq!(
-                substitute(&ast("\\y.x y"), "x", &ast("y")),
-                ast("\\y1.y y1")
+                substitute(&term("\\y.x y"), "x", &term("y")),
+                term("\\y1.y y1")
             );
 
             assert_eq!(
-                substitute(&ast("\\y.y x"), "x", &ast("y")),
-                ast("\\y1.y1 y")
+                substitute(&term("\\y.y x"), "x", &term("y")),
+                term("\\y1.y1 y")
             );
 
             assert_eq!(
-                substitute(&ast("\\y.f x y"), "x", &ast("y")),
-                ast("\\y1.f y y1")
+                substitute(&term("\\y.f x y"), "x", &term("y")),
+                term("\\y1.f y y1")
             );
         }
 
         #[test]
         fn test_substitute_capture_avoidance_with_compound_replacement() {
-            assert_eq!(substitute(&ast("\\y.x"), "x", &ast("y z")), ast("\\y1.y z"));
-
             assert_eq!(
-                substitute(&ast("\\y.x y"), "x", &ast("y z")),
-                ast("\\y1.(y z) y1")
+                substitute(&term("\\y.x"), "x", &term("y z")),
+                term("\\y1.y z")
             );
 
             assert_eq!(
-                substitute(&ast("\\y.f (x y)"), "x", &ast("y z")),
-                ast("\\y1.f ((y z) y1)")
+                substitute(&term("\\y.x y"), "x", &term("y z")),
+                term("\\y1.(y z) y1")
             );
 
             assert_eq!(
-                substitute(&ast("\\y.x"), "x", &ast("\\z.y z")),
-                ast("\\y1.\\z.y z")
+                substitute(&term("\\y.f (x y)"), "x", &term("y z")),
+                term("\\y1.f ((y z) y1)")
             );
 
             assert_eq!(
-                substitute(&ast("\\y.x y"), "x", &ast("\\z.y z")),
-                ast("\\y1.(\\z.y z) y1")
+                substitute(&term("\\y.x"), "x", &term("\\z.y z")),
+                term("\\y1.\\z.y z")
+            );
+
+            assert_eq!(
+                substitute(&term("\\y.x y"), "x", &term("\\z.y z")),
+                term("\\y1.(\\z.y z) y1")
             );
         }
 
         #[test]
         fn test_substitute_nested_lambdas() {
             assert_eq!(
-                substitute(&ast("\\a.\\b.x a b"), "x", &ast("y")),
-                ast("\\a.\\b.y a b")
+                substitute(&term("\\a.\\b.x a b"), "x", &term("y")),
+                term("\\a.\\b.y a b")
             );
 
             assert_eq!(
-                substitute(&ast("\\a.\\b.x a b"), "x", &ast("a")),
-                ast("\\a1.\\b.a a1 b")
+                substitute(&term("\\a.\\b.x a b"), "x", &term("a")),
+                term("\\a1.\\b.a a1 b")
             );
 
             assert_eq!(
-                substitute(&ast("\\y.\\z.x y z"), "x", &ast("y")),
-                ast("\\y1.\\z.y y1 z")
+                substitute(&term("\\y.\\z.x y z"), "x", &term("y")),
+                term("\\y1.\\z.y y1 z")
             );
 
             assert_eq!(
-                substitute(&ast("\\z.\\y.x y"), "x", &ast("y")),
-                ast("\\z.\\y1.y y1")
+                substitute(&term("\\z.\\y.x y"), "x", &term("y")),
+                term("\\z.\\y1.y y1")
             );
 
             assert_eq!(
-                substitute(&ast("\\z.\\y.x z y"), "x", &ast("y")),
-                ast("\\z.\\y1.y z y1")
+                substitute(&term("\\z.\\y.x z y"), "x", &term("y")),
+                term("\\z.\\y1.y z y1")
             );
         }
 
         #[test]
         fn test_substitute_nested_shadowing() {
             assert_eq!(
-                substitute(&ast("\\y.\\y.y"), "x", &ast("z")),
-                ast("\\y.\\y.y")
+                substitute(&term("\\y.\\y.y"), "x", &term("z")),
+                term("\\y.\\y.y")
             );
 
             assert_eq!(
-                substitute(&ast("\\y.\\x.x"), "x", &ast("z")),
-                ast("\\y.\\x.x")
+                substitute(&term("\\y.\\x.x"), "x", &term("z")),
+                term("\\y.\\x.x")
             );
 
             assert_eq!(
-                substitute(&ast("\\y.\\x.y x"), "x", &ast("z")),
-                ast("\\y.\\x.y x")
+                substitute(&term("\\y.\\x.y x"), "x", &term("z")),
+                term("\\y.\\x.y x")
             );
 
             assert_eq!(
-                substitute(&ast("\\z.(\\x.x) x"), "x", &ast("y")),
-                ast("\\z.(\\x.x) y")
+                substitute(&term("\\z.(\\x.x) x"), "x", &term("y")),
+                term("\\z.(\\x.x) y")
             );
 
             assert_eq!(
-                substitute(&ast("\\z.(\\x.x z) x"), "x", &ast("y")),
-                ast("\\z.(\\x.x z) y")
+                substitute(&term("\\z.(\\x.x z) x"), "x", &term("y")),
+                term("\\z.(\\x.x z) y")
             );
         }
 
         #[test]
         fn test_substitute_more_complex_applications() {
-            assert_eq!(substitute(&ast("(x y) z"), "x", &ast("f")), ast("(f y) z"));
-
-            assert_eq!(substitute(&ast("f (x y)"), "x", &ast("z")), ast("f (z y)"));
-
             assert_eq!(
-                substitute(&ast("(x x) (x x)"), "x", &ast("y")),
-                ast("(y y) (y y)")
+                substitute(&term("(x y) z"), "x", &term("f")),
+                term("(f y) z")
             );
 
             assert_eq!(
-                substitute(&ast("(\\z.z) x"), "x", &ast("y")),
-                ast("(\\z.z) y")
+                substitute(&term("f (x y)"), "x", &term("z")),
+                term("f (z y)")
             );
 
             assert_eq!(
-                substitute(&ast("x (\\z.x z)"), "x", &ast("y")),
-                ast("y (\\z.y z)")
+                substitute(&term("(x x) (x x)"), "x", &term("y")),
+                term("(y y) (y y)")
+            );
+
+            assert_eq!(
+                substitute(&term("(\\z.z) x"), "x", &term("y")),
+                term("(\\z.z) y")
+            );
+
+            assert_eq!(
+                substitute(&term("x (\\z.x z)"), "x", &term("y")),
+                term("y (\\z.y z)")
             );
         }
 
         #[test]
         fn test_substitute_replacement_with_free_vars() {
-            assert_eq!(substitute(&ast("\\a.x"), "x", &ast("y a")), ast("\\a1.y a"));
-
             assert_eq!(
-                substitute(&ast("\\a.x a"), "x", &ast("y a")),
-                ast("\\a1.(y a) a1")
+                substitute(&term("\\a.x"), "x", &term("y a")),
+                term("\\a1.y a")
             );
 
             assert_eq!(
-                substitute(&ast("\\b.\\a.x b a"), "x", &ast("a")),
-                ast("\\b.\\a1.a b a1")
+                substitute(&term("\\a.x a"), "x", &term("y a")),
+                term("\\a1.(y a) a1")
             );
 
             assert_eq!(
-                substitute(&ast("\\b.\\a.x a b"), "x", &ast("a")),
-                ast("\\b.\\a1.a a1 b")
+                substitute(&term("\\b.\\a.x b a"), "x", &term("a")),
+                term("\\b.\\a1.a b a1")
+            );
+
+            assert_eq!(
+                substitute(&term("\\b.\\a.x a b"), "x", &term("a")),
+                term("\\b.\\a1.a a1 b")
             );
         }
 
         #[test]
         fn test_substitute_identity_like_cases() {
             assert_eq!(
-                substitute(&ast("\\x.\\y.x"), "x", &ast("z")),
-                ast("\\x.\\y.x")
+                substitute(&term("\\x.\\y.x"), "x", &term("z")),
+                term("\\x.\\y.x")
             );
 
             assert_eq!(
-                substitute(&ast("\\z.\\y.z"), "x", &ast("y")),
-                ast("\\z.\\y.z")
+                substitute(&term("\\z.\\y.z"), "x", &term("y")),
+                term("\\z.\\y.z")
             );
 
             assert_eq!(
-                substitute(&ast("\\z.\\y.x"), "x", &ast("y")),
-                ast("\\z.\\y1.y")
+                substitute(&term("\\z.\\y.x"), "x", &term("y")),
+                term("\\z.\\y1.y")
             );
 
             assert_eq!(
-                substitute(&ast("\\z.\\y.x z"), "x", &ast("y")),
-                ast("\\z.\\y1.y z")
+                substitute(&term("\\z.\\y.x z"), "x", &term("y")),
+                term("\\z.\\y1.y z")
             );
         }
 
@@ -937,16 +947,16 @@ mod tests {
 
         #[test]
         fn test_free_vars() {
-            assert_eq!(free_vars(&ast("x")), HashSet::from(["x".into()]));
-            assert_eq!(free_vars(&ast("\\x.x")), HashSet::new());
-            assert_eq!(free_vars(&ast("\\x.y")), HashSet::from(["y".into()]));
+            assert_eq!(free_vars(&term("x")), HashSet::from(["x".into()]));
+            assert_eq!(free_vars(&term("\\x.x")), HashSet::new());
+            assert_eq!(free_vars(&term("\\x.y")), HashSet::from(["y".into()]));
             assert_eq!(
-                free_vars(&ast("f x")),
+                free_vars(&term("f x")),
                 HashSet::from(["f".into(), "x".into()])
             );
-            assert_eq!(free_vars(&ast("\\x.x y")), HashSet::from(["y".into()]));
-            assert_eq!(free_vars(&ast("(\\x.x) y")), HashSet::from(["y".into()]));
-            assert_eq!(free_vars(&ast("\\x.\\y.x z")), HashSet::from(["z".into()]))
+            assert_eq!(free_vars(&term("\\x.x y")), HashSet::from(["y".into()]));
+            assert_eq!(free_vars(&term("(\\x.x) y")), HashSet::from(["y".into()]));
+            assert_eq!(free_vars(&term("\\x.\\y.x z")), HashSet::from(["z".into()]))
         }
     }
 }
