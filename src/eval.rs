@@ -355,7 +355,11 @@ pub fn substitute(term: &Term, var: &str, replacement: &Term) -> Term {
             if param == var || !free_body.contains(var) {
                 term.clone()
             } else if !free_replacement.contains(param) {
-                Term::Lambda(param.clone(), t.clone(), Box::new(substitute(body, var, replacement)))
+                Term::Lambda(
+                    param.clone(),
+                    t.clone(),
+                    Box::new(substitute(body, var, replacement)),
+                )
             } else {
                 let mut used = free_replacement;
                 used.extend(free_body);
@@ -363,9 +367,11 @@ pub fn substitute(term: &Term, var: &str, replacement: &Term) -> Term {
                 used.insert(var.to_string());
                 let fresh_name = create_fresh_name(param, &used);
                 match update_lambda(term, &fresh_name) {
-                    Term::Lambda(new_param, t, new_body) => {
-                        Term::Lambda(new_param, t.clone(), Box::new(substitute(&new_body, var, replacement)))
-                    }
+                    Term::Lambda(new_param, t, new_body) => Term::Lambda(
+                        new_param,
+                        t.clone(),
+                        Box::new(substitute(&new_body, var, replacement)),
+                    ),
                     _ => unreachable!(),
                 }
             }
@@ -532,6 +538,7 @@ mod tests {
                 update_lambda(
                     &Term::Lambda(
                         "y".into(),
+                        None,
                         Box::new(Term::Application(
                             Box::new(Term::Var("x".into())),
                             Box::new(Term::Var("y".into()))
@@ -541,6 +548,7 @@ mod tests {
                 ),
                 Term::Lambda(
                     "y1".into(),
+                    None,
                     Box::new(Term::Application(
                         Box::new(Term::Var("x".into())),
                         Box::new(Term::Var("y1".into()))
@@ -551,13 +559,23 @@ mod tests {
                 update_lambda(
                     &Term::Lambda(
                         "y".into(),
-                        Box::new(Term::Lambda("y".into(), Box::new(Term::Var("y".into()))))
+                        None,
+                        Box::new(Term::Lambda(
+                            "y".into(),
+                            None,
+                            Box::new(Term::Var("y".into()))
+                        ))
                     ),
                     "y1",
                 ),
                 Term::Lambda(
                     "y1".into(),
-                    Box::new(Term::Lambda("y".into(), Box::new(Term::Var("y".into()))))
+                    None,
+                    Box::new(Term::Lambda(
+                        "y".into(),
+                        None,
+                        Box::new(Term::Var("y".into()))
+                    ))
                 ),
             );
         }
@@ -584,16 +602,17 @@ mod tests {
             );
             assert_eq!(
                 rename(
-                    &Term::Lambda("y".into(), Box::new(Term::Var("y".into()))),
+                    &Term::Lambda("y".into(), None, Box::new(Term::Var("y".into()))),
                     "y",
                     "z"
                 ),
-                Term::Lambda("y".into(), Box::new(Term::Var("y".into())))
+                Term::Lambda("y".into(), None, Box::new(Term::Var("y".into())))
             );
             assert_eq!(
                 rename(
                     &Term::Lambda(
                         "z".into(),
+                        None,
                         Box::new(Term::Application(
                             Box::new(Term::Var("y".into())),
                             Box::new(Term::Var("z".into()))
@@ -604,6 +623,7 @@ mod tests {
                 ),
                 Term::Lambda(
                     "z".into(),
+                    None,
                     Box::new(Term::Application(
                         Box::new(Term::Var("y1".into())),
                         Box::new(Term::Var("z".into()))
@@ -866,20 +886,20 @@ mod tests {
             );
             assert_eq!(
                 substitute(
-                    &Term::Lambda("z".into(), Box::new(Term::Var("x".into())),),
+                    &Term::Lambda("z".into(), None, Box::new(Term::Var("x".into())),),
                     "x",
                     &Term::Var("y".into())
                 ),
-                Term::Lambda("z".into(), Box::new(Term::Var("y".into())),),
+                Term::Lambda("z".into(), None, Box::new(Term::Var("y".into())),),
             );
 
             assert_eq!(
                 substitute(
-                    &Term::Lambda("x".into(), Box::new(Term::Var("x".into())),),
+                    &Term::Lambda("x".into(), None, Box::new(Term::Var("x".into())),),
                     "x",
                     &Term::Var("y".into())
                 ),
-                Term::Lambda("x".into(), Box::new(Term::Var("x".into())),),
+                Term::Lambda("x".into(), None, Box::new(Term::Var("x".into())),),
             );
         }
     }

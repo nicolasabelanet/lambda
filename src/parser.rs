@@ -7,7 +7,7 @@ atom        := IDENT | LPAREN term RPAREN
 let_expr    := LET IDENT EQUAL term IN term
 */
 
-use std::fmt::{Debug, Display};
+use std::fmt::{Debug, Display, write};
 
 use crate::lexer::{Token, TokenKind};
 
@@ -100,13 +100,29 @@ impl ParseError {
     }
 }
 
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Type::Var(name) => write!(f, "{name}"),
+            Type::Arrow(left, right) => {
+                write!(f, "{left} -> {right}")
+            }
+        }
+    }
+}
+
 impl Display for Term {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Term::Var(name) => write!(f, "{name}"),
-            Term::Lambda(name, _, body) => {
+            Term::Lambda(name, ty_monad, body) => {
                 let string_body = body.to_string();
-                write!(f, "\\{name}.{}", string_body)
+
+                let mut string_ty = "".to_string();
+                if let Some(ty) = ty_monad {
+                    string_ty = format!(": {ty}");
+                }
+                write!(f, "\\{name}{string_ty}.{}", string_body)
             }
             Term::Let { name, value, body } => {
                 write!(f, "let {name} = {value} in {body}")
@@ -587,13 +603,18 @@ mod tests {
         assert_roundtrip(Term::Var("x".into()));
         assert_roundtrip(Term::Lambda(
             "x".into(),
+            None,
             Box::new(Term::Application(
                 Box::new(Term::Var("x".into())),
                 Box::new(Term::Var("y".into())),
             )),
         ));
         assert_roundtrip(Term::Application(
-            Box::new(Term::Lambda("x".into(), Box::new(Term::Var("x".into())))),
+            Box::new(Term::Lambda(
+                "x".into(),
+                None,
+                Box::new(Term::Var("x".into())),
+            )),
             Box::new(Term::Var("y".into())),
         ));
 
@@ -617,7 +638,11 @@ mod tests {
     fn test_pretty_printer() {
         assert_eq!(
             Term::Application(
-                Box::new(Term::Lambda("x".into(), Box::new(Term::Var("x".into())))),
+                Box::new(Term::Lambda(
+                    "x".into(),
+                    None,
+                    Box::new(Term::Var("x".into())),
+                )),
                 Box::new(Term::Var("y".into()))
             )
             .to_string(),
@@ -638,6 +663,7 @@ mod tests {
         assert_eq!(
             Term::Lambda(
                 "x".into(),
+                None,
                 Box::new(Term::Application(
                     Box::new(Term::Var("x".into())),
                     Box::new(Term::Var("y".into())),
@@ -649,7 +675,11 @@ mod tests {
         assert_eq!(
             Term::Application(
                 Box::new(Term::Var("f".into())),
-                Box::new(Term::Lambda("x".into(), Box::new(Term::Var("x".into())))),
+                Box::new(Term::Lambda(
+                    "x".into(),
+                    None,
+                    Box::new(Term::Var("x".into())),
+                )),
             )
             .to_string(),
             "f (\\x.x)"
@@ -690,25 +720,33 @@ mod tests {
         assert_eq!(lex_and_parse("(x)"), Term::Var("x".into()));
         assert_eq!(
             lex_and_parse("(\\x.x)"),
-            Term::Lambda("x".into(), Box::new(Term::Var("x".into())))
+            Term::Lambda("x".into(), None, Box::new(Term::Var("x".into())))
         );
 
         assert_eq!(
             lex_and_parse("(\\x.x) y"),
             Term::Application(
-                Box::new(Term::Lambda("x".into(), Box::new(Term::Var("x".into())))),
+                Box::new(Term::Lambda(
+                    "x".into(),
+                    None,
+                    Box::new(Term::Var("x".into())),
+                )),
                 Box::new(Term::Var("y".into()))
             )
         );
         assert_eq!(
             lex_and_parse("\\x.x"),
-            Term::Lambda("x".into(), Box::new(Term::Var("x".into())))
+            Term::Lambda("x".into(), None, Box::new(Term::Var("x".into())))
         );
         assert_eq!(
             lex_and_parse("f (\\x.x)"),
             Term::Application(
                 Box::new(Term::Var("f".into())),
-                Box::new(Term::Lambda("x".into(), Box::new(Term::Var("x".into())))),
+                Box::new(Term::Lambda(
+                    "x".into(),
+                    None,
+                    Box::new(Term::Var("x".into())),
+                )),
             )
         );
         assert_eq!(lex_and_parse("((x))"), Term::Var("x".into()));
@@ -716,6 +754,7 @@ mod tests {
             lex_and_parse("\\x.x y"),
             Term::Lambda(
                 "x".into(),
+                None,
                 Box::new(Term::Application(
                     Box::new(Term::Var("x".into())),
                     Box::new(Term::Var("y".into())),
@@ -726,7 +765,11 @@ mod tests {
             lex_and_parse("let id = \\x.x in id y"),
             Term::Let {
                 name: "id".into(),
-                value: Box::new(Term::Lambda("x".into(), Box::new(Term::Var("x".into())))),
+                value: Box::new(Term::Lambda(
+                    "x".into(),
+                    None,
+                    Box::new(Term::Var("x".into())),
+                )),
                 body: Box::new(Term::Application(
                     Box::new(Term::Var("id".into())),
                     Box::new(Term::Var("y".into())),
