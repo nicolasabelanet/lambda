@@ -7,7 +7,7 @@ atom        := IDENT | LPAREN term RPAREN
 let_expr    := LET IDENT EQUAL term IN term
 */
 
-use std::fmt::{Debug, Display, write};
+use std::fmt::{write, Debug, Display};
 
 use crate::lexer::{Token, TokenKind};
 
@@ -105,7 +105,11 @@ impl Display for Type {
         match self {
             Type::Var(name) => write!(f, "{name}"),
             Type::Arrow(left, right) => {
-                write!(f, "{left} -> {right}")
+                // Parenthesize left if it's also an arrow.
+                match **left {
+                    Type::Arrow(_, _) => write!(f, "({left}) -> {right}"),
+                    _ => write!(f, "{left} -> {right}"),
+                }
             }
         }
     }
@@ -156,11 +160,11 @@ impl Parser {
     }
 
     fn peek(&self) -> Option<&Token> {
-        if self.pos >= self.input.len() {
-            return None;
-        }
-
         self.input.get(self.pos)
+    }
+
+    fn peek_is(&self, kind: &TokenKind) -> bool {
+        matches!(self.peek(), Some(Token { kind: k, .. }) if k == kind)
     }
 
     fn advance(&mut self) {
@@ -171,6 +175,23 @@ impl Parser {
 
     fn eof_pos(&self) -> usize {
         self.input.last().map(|token| token.span.end).unwrap_or(0)
+    }
+
+    fn expect(&mut self, kind: TokenKind, expected: &'static str) -> Result<(), ParseError> {
+        match self.peek() {
+            Some(token) if token.kind == kind => {
+                self.advance();
+                Ok(())
+            }
+            Some(found) => Err(ParseError::MissingToken {
+                expected,
+                pos: found.span.start,
+            }),
+            None => Err(ParseError::MissingToken {
+                expected,
+                pos: self.eof_pos(),
+            }),
+        }
     }
 
     fn parse_type_atom(&mut self) -> Result<Type, ParseError> {
@@ -192,24 +213,9 @@ impl Parser {
             }
             TokenKind::LParen => {
                 self.advance();
-                let term = self.parse_type()?;
-                match self.peek() {
-                    Some(Token {
-                        kind: TokenKind::RParen,
-                        ..
-                    }) => {
-                        self.advance();
-                        Ok(term)
-                    }
-                    Some(found) => Err(ParseError::MissingToken {
-                        expected: "')'",
-                        pos: found.span.start,
-                    }),
-                    None => Err(ParseError::MissingToken {
-                        expected: "')'",
-                        pos: self.eof_pos(),
-                    }),
-                }
+                let ty = self.parse_type()?;
+                self.expect(TokenKind::RParen, "')'")?;
+                Ok(ty)
             }
             TokenKind::EOF => Err(ParseError::MissingToken {
                 expected: "type",
@@ -242,23 +248,8 @@ impl Parser {
             TokenKind::LParen => {
                 self.advance();
                 let term = self.parse_term()?;
-                match self.peek() {
-                    Some(Token {
-                        kind: TokenKind::RParen,
-                        ..
-                    }) => {
-                        self.advance();
-                        Ok(term)
-                    }
-                    Some(found) => Err(ParseError::MissingToken {
-                        expected: "')'",
-                        pos: found.span.start,
-                    }),
-                    None => Err(ParseError::MissingToken {
-                        expected: "')'",
-                        pos: self.eof_pos(),
-                    }),
-                }
+                self.expect(TokenKind::RParen, "')'")?;
+                Ok(term)
             }
             TokenKind::EOF => Err(ParseError::MissingToken {
                 expected: "term",
@@ -353,25 +344,7 @@ impl Parser {
             _ => None,
         };
 
-        match self.peek() {
-            Some(Token {
-                kind: TokenKind::Dot,
-                ..
-            }) => self.advance(),
-
-            Some(found) => {
-                return Err(ParseError::MissingToken {
-                    expected: "'.'",
-                    pos: found.span.start,
-                });
-            }
-            None => {
-                return Err(ParseError::MissingToken {
-                    expected: "'.'",
-                    pos: self.eof_pos(),
-                });
-            }
-        }
+        self.expect(TokenKind::Dot, "'.'")?;
 
         let body = self.parse_term()?;
 
@@ -381,11 +354,7 @@ impl Parser {
     fn parse_type(&mut self) -> Result<Type, ParseError> {
         let left = self.parse_type_atom()?;
 
-        if let Some(Token {
-            kind: TokenKind::Arrow,
-            ..
-        }) = self.peek()
-        {
+        if self.peek_is(&TokenKind::Arrow) {
             self.advance();
             let right = self.parse_type()?;
             Ok(Type::Arrow(Box::new(left), Box::new(right)))
@@ -584,8 +553,8 @@ pub fn parse_term(input: Vec<Token>) -> Result<Term, ParseError> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        lexer::{Span, Token, lex},
-        parser::{ParseError, Statement, Term, parse, parse_term},
+        lexer::{lex, Span, Token},
+        parser::{parse, parse_term, ParseError, Statement, Term},
     };
 
     fn lex_and_parse(input: &str) -> Term {

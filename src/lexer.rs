@@ -90,6 +90,16 @@ impl Lexer {
         }
     }
 
+    fn simple_token(&self, kind: TokenKind, start: usize) -> Token {
+        Token {
+            kind,
+            span: Span {
+                start,
+                end: self.pos,
+            },
+        }
+    }
+
     fn next_token(&mut self) -> Result<Token, LexError> {
         self.skip_whitespace();
 
@@ -99,36 +109,18 @@ impl Lexer {
             Some(c) if is_ident_char(c) => Ok(self.lex_ident()),
             Some('\\') | Some('λ') => {
                 self.advance();
-                Ok(Token {
-                    kind: TokenKind::Lambda,
-                    span: Span {
-                        start,
-                        end: self.pos,
-                    },
-                })
+                Ok(self.simple_token(TokenKind::Lambda, start))
             }
             Some(':') => {
                 self.advance();
-                Ok(Token {
-                    kind: TokenKind::Colon,
-                    span: Span {
-                        start,
-                        end: self.pos,
-                    },
-                })
+                Ok(self.simple_token(TokenKind::Colon, start))
             }
             Some('-') => {
                 let next = self.peek_n(1);
                 if next == Some('>') {
                     self.advance();
                     self.advance();
-                    Ok(Token {
-                        kind: TokenKind::Arrow,
-                        span: Span {
-                            start,
-                            end: self.pos,
-                        },
-                    })
+                    Ok(self.simple_token(TokenKind::Arrow, start))
                 } else {
                     Err(LexError::InvalidChar {
                         ch: '-',
@@ -141,43 +133,19 @@ impl Lexer {
             }
             Some('.') => {
                 self.advance();
-                Ok(Token {
-                    kind: TokenKind::Dot,
-                    span: Span {
-                        start,
-                        end: self.pos,
-                    },
-                })
+                Ok(self.simple_token(TokenKind::Dot, start))
             }
             Some('=') => {
                 self.advance();
-                Ok(Token {
-                    kind: TokenKind::Equals,
-                    span: Span {
-                        start,
-                        end: self.pos,
-                    },
-                })
+                Ok(self.simple_token(TokenKind::Equals, start))
             }
             Some('(') => {
                 self.advance();
-                Ok(Token {
-                    kind: TokenKind::LParen,
-                    span: Span {
-                        start,
-                        end: self.pos,
-                    },
-                })
+                Ok(self.simple_token(TokenKind::LParen, start))
             }
             Some(')') => {
                 self.advance();
-                Ok(Token {
-                    kind: TokenKind::RParen,
-                    span: Span {
-                        start,
-                        end: self.pos,
-                    },
-                })
+                Ok(self.simple_token(TokenKind::RParen, start))
             }
             Some(c) => Err(LexError::InvalidChar {
                 ch: c,
@@ -227,20 +195,9 @@ pub fn lex(input: &str) -> Result<Vec<Token>, LexError> {
         let result = lexer.next_token();
         match result {
             Ok(token) => {
-                let mut end = false;
-
-                if matches!(
-                    &token,
-                    Token {
-                        kind: TokenKind::EOF,
-                        ..
-                    }
-                ) {
-                    end = true;
-                }
+                let is_eof = matches!(&token.kind, TokenKind::EOF);
                 tokens.push(token);
-
-                if end {
+                if is_eof {
                     break;
                 }
             }
