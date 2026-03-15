@@ -24,7 +24,7 @@ impl std::fmt::Display for EvalError {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum EvalMode {
     CallByName,
     CallByValue,
@@ -45,6 +45,7 @@ impl From<ParseError> for EvalError {
 pub struct Interpreter {
     env: HashMap<String, Term>,
     step_limit: u32,
+    eval_mode: EvalMode,
 }
 
 fn ast(input: &str) -> Term {
@@ -63,10 +64,11 @@ fn stdlib() -> HashMap<String, Term> {
 }
 
 impl Interpreter {
-    pub fn new() -> Self {
+    pub fn new(eval_mode: EvalMode) -> Self {
         Interpreter {
             env: stdlib(),
             step_limit: 1_000,
+            eval_mode,
         }
     }
 
@@ -76,23 +78,19 @@ impl Interpreter {
         match ast {
             Statement::Let(name, term) => {
                 let resolved = resolve(&term, &self.env);
-                self.env
-                    .insert(name, normalize_with_limit(&resolved, self.step_limit)?);
+                self.env.insert(
+                    name,
+                    normalize_with_limit(&resolved, self.step_limit, self.eval_mode)?,
+                );
                 Ok(None)
             }
             Statement::Expr(term) => {
                 let resolved = resolve(&term, &self.env);
-                let result = normalize_with_limit(&resolved, self.step_limit)?;
+                let result = normalize_with_limit(&resolved, self.step_limit, self.eval_mode)?;
                 self.env.insert("_".to_string(), result.clone());
                 Ok(Some(result))
             }
         }
-    }
-}
-
-impl Default for Interpreter {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -153,7 +151,7 @@ fn normalize_with_limit(term: &Term, limit: u32, eval_mode: EvalMode) -> Result<
 
     let mut steps: u32 = 0;
 
-    while let Some(reduced) = step(&current, EvalMode::CallByValue) {
+    while let Some(reduced) = step(&current, eval_mode) {
         if steps >= limit {
             return Err(EvalError::StepLimit { limit });
         }

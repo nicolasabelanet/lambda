@@ -2,13 +2,13 @@ use rustyline::DefaultEditor;
 
 use crate::{
     diagnostic::format_span_error,
-    eval::{EvalError, Interpreter},
+    eval::{EvalError, EvalMode, Interpreter},
 };
 
 pub fn repl() {
     let mut rl = DefaultEditor::new().unwrap();
 
-    let mut interpreter = Interpreter::new();
+    let mut interpreter = Interpreter::new(EvalMode::CallByValue);
 
     loop {
         let line = rl.readline("λ> ");
