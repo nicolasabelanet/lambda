@@ -4,18 +4,85 @@ use crate::{
     eval::{EvalError, EvalMode, normalize_with_limit, resolve},
     lexer::lex,
     parser::{Statement, Term, parse},
-    typing::{Type, TypeEnv, TypeVarGenerator, infer_statement, seed_free_vars_statement},
+    typing::{
+        Type, TypeEnv, TypeScheme, TypeVar, TypeVarGenerator, infer_statement,
+        seed_free_vars_statement,
+    },
     util::term,
 };
 
 fn stdlib() -> HashMap<String, Term> {
     HashMap::from_iter([
-        ("true".to_string(), term("\\t.\\f.t")),
-        ("false".to_string(), term("\\t.\\f.f")),
-        ("if".to_string(), term("\\b.\\t.\\f. b t f")),
-        ("and".to_string(), term("\\p.\\q. p q p")),
-        ("or".to_string(), term("\\p.\\q. p p q")),
-        ("not".to_string(), term("\\p. p false true")),
+        ("true".to_string(), term(r"\t.\f.t")),
+        ("false".to_string(), term(r"\t.\f.f")),
+        ("if".to_string(), term(r"\b.\t.\f. b t f")),
+        ("and".to_string(), term(r"\p.\q. p q p")),
+        ("or".to_string(), term(r"\p.\q. p p q")),
+        ("not".to_string(), term(r"\p. p false true")),
+    ])
+}
+
+fn church_bool_scheme() -> TypeScheme {
+    // ∀a. a -> a -> a
+    let a = 0u32;
+    TypeScheme {
+        vars: vec![a],
+        ty: Type::Arrow(
+            Box::new(Type::Meta(a)),
+            Box::new(Type::Arrow(
+                Box::new(Type::Meta(a)),
+                Box::new(Type::Meta(a)),
+            )),
+        ),
+    }
+}
+fn stdlib_types() -> TypeEnv {
+    // Helper for (a -> a -> a)
+    let bool_ty = |a: TypeVar| {
+        Type::Arrow(
+            Box::new(Type::Meta(a)),
+            Box::new(Type::Arrow(
+                Box::new(Type::Meta(a)),
+                Box::new(Type::Meta(a)),
+            )),
+        )
+    };
+    // ∀a. (a -> a -> a) -> a -> a -> a
+    let if_scheme = {
+        let a = 0u32;
+        TypeScheme {
+            vars: vec![a],
+            ty: Type::Arrow(
+                Box::new(bool_ty(a)),
+                Box::new(Type::Arrow(
+                    Box::new(Type::Meta(a)),
+                    Box::new(Type::Arrow(
+                        Box::new(Type::Meta(a)),
+                        Box::new(Type::Meta(a)),
+                    )),
+                )),
+            ),
+        }
+    };
+    // ∀a. (a -> a -> a) -> (a -> a -> a) -> (a -> a -> a)
+    let bin_bool_scheme = {
+        let a = 0u32;
+        let bool_a = bool_ty(a);
+        TypeScheme {
+            vars: vec![a],
+            ty: Type::Arrow(
+                Box::new(bool_a.clone()),
+                Box::new(Type::Arrow(Box::new(bool_a.clone()), Box::new(bool_a))),
+            ),
+        }
+    };
+    TypeEnv::from_iter([
+        ("true".into(), church_bool_scheme()),
+        ("false".into(), church_bool_scheme()),
+        ("if".into(), if_scheme),
+        ("and".into(), bin_bool_scheme.clone()),
+        ("or".into(), bin_bool_scheme.clone()),
+        ("not".into(), bin_bool_scheme), // (Bool -> Bool) with Church Bool
     ])
 }
 
@@ -30,7 +97,7 @@ impl Interpreter {
     pub fn new(eval_mode: EvalMode) -> Self {
         Interpreter {
             env: stdlib(),
-            type_env: HashMap::new(),
+            type_env: stdlib_types(),
             step_limit: 1_000,
             eval_mode,
         }

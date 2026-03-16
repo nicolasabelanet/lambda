@@ -64,12 +64,12 @@ pub type TypeEnv = HashMap<String, TypeScheme>;
 
 type Subst = HashMap<TypeVar, Type>;
 
-type TypeVar = u32;
+pub type TypeVar = u32;
 
 #[derive(Clone)]
 pub struct TypeScheme {
-    vars: Vec<TypeVar>,
-    ty: Type,
+    pub vars: Vec<TypeVar>,
+    pub ty: Type,
 }
 
 pub struct TypeVarGenerator {
