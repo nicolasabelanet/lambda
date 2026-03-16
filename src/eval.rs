@@ -1,12 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    lexer::{LexError, lex},
-    parser::{ParseError, Term, parse_term},
-    typing::{
-        Type, TypeEnv, TypeError, TypeVarGenerator, infer, seed_free_vars_statement,
-        seed_free_vars_term,
-    },
+    lexer::{lex, LexError},
+    parser::{parse_term, ParseError, Term},
+    typing::{infer, seed_free_vars_term, Type, TypeEnv, TypeError, TypeVarGenerator},
 };
 
 #[derive(Debug)]
@@ -416,11 +413,11 @@ mod tests {
 
     use crate::{
         eval::{
-            EvalError, EvalMode, create_fresh_name, free_vars, normalize, rename, step, substitute,
-            update_lambda,
+            create_fresh_name, free_vars, normalize, rename, step, substitute, update_lambda,
+            EvalError, EvalMode,
         },
         lexer::lex,
-        parser::{Term, parse_term},
+        parser::{parse_term, Term},
     };
 
     fn term(input: &str) -> Term {

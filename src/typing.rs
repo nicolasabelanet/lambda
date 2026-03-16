@@ -9,7 +9,11 @@ use crate::parser::{Statement, Term};
 pub enum TypeError {
     UnboundVar(String),
     OccursCheckFailed { var: TypeVar, ty: Type },
-    TypeMismatch { expected: Type, found: Type },
+    TypeMismatch {
+        expected: Type,
+        found: Type,
+        context: Option<TypeMismatchContext>,
+    },
     ExpectedFunction { found: Type },
 }
 impl Display for TypeError {
@@ -19,8 +23,16 @@ impl Display for TypeError {
             TypeError::OccursCheckFailed { var, ty } => {
                 write!(f, "occurs check failed: t{var} occurs in {ty}")
             }
-            TypeError::TypeMismatch { expected, found } => {
-                write!(f, "type mismatch: expected {expected}, found {found}")
+            TypeError::TypeMismatch {
+                expected,
+                found,
+                context,
+            } => {
+                write!(f, "type mismatch: expected {expected}, found {found}")?;
+                if let Some(context) = context {
+                    write!(f, "\n  in: {} : {}", context.term, context.ty)?;
+                }
+                Ok(())
             }
             TypeError::ExpectedFunction { found } => {
                 write!(f, "expected function type, found {found}")
@@ -29,9 +41,33 @@ impl Display for TypeError {
     }
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub struct TypeMismatchContext {
+    pub term: String,
+    pub ty: Type,
+}
+
 impl TypeError {
     pub fn message(&self) -> String {
         self.to_string()
+    }
+
+    fn with_context(self, term: &Term, ty: &Type) -> TypeError {
+        match self {
+            TypeError::TypeMismatch {
+                expected,
+                found,
+                ..
+            } => TypeError::TypeMismatch {
+                expected,
+                found,
+                context: Some(TypeMismatchContext {
+                    term: term.to_string(),
+                    ty: ty.clone(),
+                }),
+            },
+            other => other,
+        }
     }
 }
 
@@ -259,6 +295,7 @@ fn unify(ty1: &Type, ty2: &Type, subst: &Subst) -> Result<Subst, TypeError> {
         (_, _) => Err(TypeError::TypeMismatch {
             expected: ty1.clone(),
             found: ty2.clone(),
+            context: None,
         }),
     }
 }
@@ -310,6 +347,7 @@ pub fn infer(
             // infer a under env updated by s1
             let env1 = apply_subst_env(env, &s1);
             let (s2, a_ty) = infer(right, &env1, generator)?;
+            let a_ty = apply_subst_type(&a_ty, &s2);
             // create fresh return type
             let ret_ty = generator.fresh();
             // enforce f_ty ~ a_ty -> ret_ty
@@ -318,7 +356,8 @@ pub fn infer(
                 &f_ty,
                 &Type::Arrow(Box::new(a_ty.clone()), Box::new(ret_ty.clone())),
                 &s2,
-            )?;
+            )
+            .map_err(|err| err.with_context(right, &a_ty))?;
             // compose substitutions
             let s = compose_subst(&s3, &compose_subst(&s2, &s1));
             // return
