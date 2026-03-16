@@ -3,7 +3,7 @@ use rustyline::DefaultEditor;
 use crate::{
     diagnostic::format_span_error,
     eval::{EvalError, EvalMode},
-    interpreter::{Interpreter}
+    interpreter::Interpreter,
 };
 
 pub fn repl() {
@@ -25,7 +25,7 @@ pub fn repl() {
                 rl.add_history_entry(input).ok();
 
                 match interpreter.eval_statement(input) {
-                    Ok(Some(result)) => println!("{result}"),
+                    Ok(Some((result, ty))) => println!("{result} : {ty}"),
                     Ok(None) => {}
                     Err(err) => print_error(input, err),
                 }

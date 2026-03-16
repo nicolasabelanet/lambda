@@ -1,13 +1,18 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    lexer::{lex, LexError},
-    parser::{parse_term, ParseError, Term, Type},
+    lexer::{LexError, lex},
+    parser::{ParseError, Term, parse_term},
+    typing::{
+        Type, TypeEnv, TypeError, TypeVarGenerator, infer, seed_free_vars_statement,
+        seed_free_vars_term,
+    },
 };
 
 #[derive(Debug)]
 pub enum EvalError {
     Lex(LexError),
+    Type(TypeError),
     Parse(ParseError),
     StepLimit { limit: u32 },
 }
@@ -15,6 +20,7 @@ pub enum EvalError {
 impl std::fmt::Display for EvalError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            EvalError::Type(err) => write!(f, "{}", err.message()),
             EvalError::Lex(err) => write!(f, "{}", err.message()),
             EvalError::Parse(err) => write!(f, "{}", err.message()),
             EvalError::StepLimit { limit } => {
@@ -28,6 +34,12 @@ impl std::fmt::Display for EvalError {
 pub enum EvalMode {
     CallByName,
     CallByValue,
+}
+
+impl From<TypeError> for EvalError {
+    fn from(err: TypeError) -> Self {
+        EvalError::Type(err)
+    }
 }
 
 impl From<LexError> for EvalError {
@@ -87,6 +99,13 @@ fn resolve_impl(term: &Term, env: &HashMap<String, Term>, bound: &mut HashSet<St
 pub fn evaluate(input: &str, eval_mode: EvalMode) -> Result<Term, EvalError> {
     let tokens = lex(input)?;
     let term = parse_term(tokens)?;
+
+    let mut type_env = TypeEnv::new();
+    let mut generator = TypeVarGenerator::new();
+
+    seed_free_vars_term(&term, &mut type_env, &mut generator);
+    infer(&term, &type_env, &mut generator)?;
+
     normalize(&term, eval_mode)
 }
 
@@ -397,7 +416,8 @@ mod tests {
 
     use crate::{
         eval::{
-            EvalError, EvalMode, create_fresh_name, free_vars, normalize, rename, step, substitute, update_lambda
+            EvalError, EvalMode, create_fresh_name, free_vars, normalize, rename, step, substitute,
+            update_lambda,
         },
         lexer::lex,
         parser::{Term, parse_term},

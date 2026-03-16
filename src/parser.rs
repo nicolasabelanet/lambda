@@ -9,7 +9,10 @@ let_expr    := LET IDENT EQUAL term IN term
 
 use std::fmt::{Debug, Display};
 
-use crate::lexer::{Token, TokenKind};
+use crate::{
+    lexer::{Token, TokenKind},
+    typing::Type,
+};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Term {
@@ -21,12 +24,6 @@ pub enum Term {
         value: Box<Term>,
         body: Box<Term>,
     },
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum Type {
-    Var(String),
-    Arrow(Box<Type>, Box<Type>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -100,33 +97,13 @@ impl ParseError {
     }
 }
 
-impl Display for Type {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Type::Var(name) => write!(f, "{name}"),
-            Type::Arrow(left, right) => {
-                // Parenthesize left if it's also an arrow.
-                match **left {
-                    Type::Arrow(_, _) => write!(f, "({left}) -> {right}"),
-                    _ => write!(f, "{left} -> {right}"),
-                }
-            }
-        }
-    }
-}
-
 impl Display for Term {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Term::Var(name) => write!(f, "{name}"),
-            Term::Lambda(name, ty_monad, body) => {
+            Term::Lambda(name, _, body) => {
                 let string_body = body.to_string();
-
-                let mut string_ty = "".to_string();
-                if let Some(ty) = ty_monad {
-                    string_ty = format!(": {ty}");
-                }
-                write!(f, "\\{name}{string_ty}.{}", string_body)
+                write!(f, "\\{name}.{}", string_body)
             }
             Term::Let { name, value, body } => {
                 write!(f, "let {name} = {value} in {body}")
@@ -148,7 +125,6 @@ impl Display for Term {
         }
     }
 }
-
 
 struct Parser {
     pos: usize,
