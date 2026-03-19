@@ -81,6 +81,7 @@ pub enum Type {
     Var(String),
     Arrow(Box<Type>, Box<Type>),
     Meta(TypeVar),
+    Bool,
 }
 
 impl Display for Type {
@@ -97,6 +98,7 @@ impl Display for Type {
             Type::Meta(id) => {
                 write!(f, "t{id}")
             }
+            Type::Bool => write!(f, "Bool"),
         }
     }
 }
@@ -144,6 +146,7 @@ fn free_type_vars_type(ty: &Type) -> HashSet<TypeVar> {
             free_vars.extend(free_type_vars_type(right));
             free_vars
         }
+        Type::Bool => HashSet::new(),
     }
 }
 
@@ -198,6 +201,7 @@ fn replace_meta(ty: &Type, mapping: &HashMap<TypeVar, Type>) -> Type {
 
             Type::Arrow(Box::new(mapped_left), Box::new(mapped_right))
         }
+        Type::Bool => Type::Bool,
     }
 }
 
@@ -217,6 +221,7 @@ fn apply_subst_type(ty: &Type, subst: &Subst) -> Type {
 
             Type::Arrow(Box::new(subst_left), Box::new(subst_right))
         }
+        Type::Bool => Type::Bool,
     }
 }
 
@@ -261,6 +266,7 @@ fn occurs(var: TypeVar, ty: &Type) -> bool {
         Type::Var(_) => false,
         Type::Meta(id) => var == *id,
         Type::Arrow(left, right) => occurs(var, left) || occurs(var, right),
+        Type::Bool => false,
     }
 }
 
@@ -293,6 +299,7 @@ fn unify(ty1: &Type, ty2: &Type, subst: &Subst) -> Result<Subst, TypeError> {
     match (&ty1, &ty2) {
         (_, _) if ty1 == ty2 => Ok(subst.clone()),
         (Type::Meta(id), other) | (other, Type::Meta(id)) => unify_var(*id, other, subst),
+        (Type::Bool, Type::Bool) => Ok(subst.clone()),
         (Type::Arrow(a1, b1), Type::Arrow(a2, b2)) => {
             let unified_subst = unify(a1, a2, subst)?;
             unify(b1, b2, &unified_subst)
