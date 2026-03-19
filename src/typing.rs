@@ -171,11 +171,11 @@ fn free_type_vars_env(env: &TypeEnv) -> HashSet<TypeVar> {
 }
 
 fn generalize(ty: &Type, env: &TypeEnv) -> TypeScheme {
-    let free_ty_vars = free_type_vars_type(ty);
+    let free_type_vars = free_type_vars_type(ty);
     let free_env_vars = free_type_vars_env(env);
 
     TypeScheme {
-        vars: free_ty_vars.difference(&free_env_vars).copied().collect(),
+        vars: free_type_vars.difference(&free_env_vars).copied().collect(),
         ty: ty.clone(),
     }
 }
@@ -246,13 +246,13 @@ fn apply_subst_env(env: &TypeEnv, subst: &Subst) -> TypeEnv {
         .collect()
 }
 
-fn compose_subst(s1: &Subst, s2: &Subst) -> Subst {
-    let mut combined_subst: HashMap<_, _> = s2
+fn compose_subst(subst1: &Subst, subst2: &Subst) -> Subst {
+    let mut combined_subst: HashMap<_, _> = subst2
         .iter()
-        .map(|(key, mapping)| (*key, apply_subst_type(mapping, s1)))
+        .map(|(key, mapping)| (*key, apply_subst_type(mapping, subst1)))
         .collect();
 
-    for (key, mapping) in s1.iter() {
+    for (key, mapping) in subst1.iter() {
         combined_subst
             .entry(*key)
             .or_insert_with(|| mapping.clone());
@@ -261,52 +261,52 @@ fn compose_subst(s1: &Subst, s2: &Subst) -> Subst {
     combined_subst
 }
 
-fn occurs(var: TypeVar, ty: &Type) -> bool {
+fn occurs(type_var: TypeVar, ty: &Type) -> bool {
     match ty {
         Type::Var(_) => false,
-        Type::Meta(id) => var == *id,
-        Type::Arrow(left, right) => occurs(var, left) || occurs(var, right),
+        Type::Meta(id) => type_var == *id,
+        Type::Arrow(left, right) => occurs(type_var, left) || occurs(type_var, right),
         Type::Bool => false,
     }
 }
 
-fn unify_var(var: TypeVar, ty: &Type, subst: &Subst) -> Result<Subst, TypeError> {
+fn unify_var(type_var: TypeVar, ty: &Type, subst: &Subst) -> Result<Subst, TypeError> {
     let ty = apply_subst_type(ty, subst);
 
     if let Type::Meta(id) = ty
-        && id == var
+        && id == type_var
     {
         return Ok(subst.clone());
     }
 
-    if occurs(var, &ty) {
+    if occurs(type_var, &ty) {
         return Err(TypeError::OccursCheckFailed {
-            var,
+            var: type_var,
             ty: ty.clone(),
         });
     }
 
     let mut updated_subst = subst.clone();
-    updated_subst.insert(var, ty.clone());
+    updated_subst.insert(type_var, ty.clone());
 
     Ok(updated_subst)
 }
 
-fn unify(ty1: &Type, ty2: &Type, subst: &Subst) -> Result<Subst, TypeError> {
-    let ty1 = apply_subst_type(ty1, subst);
-    let ty2 = apply_subst_type(ty2, subst);
+fn unify(left_ty: &Type, right_ty: &Type, subst: &Subst) -> Result<Subst, TypeError> {
+    let left_ty = apply_subst_type(left_ty, subst);
+    let right_ty = apply_subst_type(right_ty, subst);
 
-    match (&ty1, &ty2) {
-        (_, _) if ty1 == ty2 => Ok(subst.clone()),
+    match (&left_ty, &right_ty) {
+        (_, _) if left_ty == right_ty => Ok(subst.clone()),
         (Type::Meta(id), other) | (other, Type::Meta(id)) => unify_var(*id, other, subst),
         (Type::Bool, Type::Bool) => Ok(subst.clone()),
-        (Type::Arrow(a1, b1), Type::Arrow(a2, b2)) => {
-            let unified_subst = unify(a1, a2, subst)?;
-            unify(b1, b2, &unified_subst)
+        (Type::Arrow(left_arg, left_ret), Type::Arrow(right_arg, right_ret)) => {
+            let subst1 = unify(left_arg, right_arg, subst)?;
+            unify(left_ret, right_ret, &subst1)
         }
         (_, _) => Err(TypeError::TypeMismatch {
-            expected: ty1.clone(),
-            found: ty2.clone(),
+            expected: left_ty.clone(),
+            found: right_ty.clone(),
             context: None,
         }),
     }
@@ -332,8 +332,8 @@ pub fn infer(
                 generator.fresh()
             };
 
-            let mut lambda_env = env.clone();
-            lambda_env.insert(
+            let mut env1 = env.clone();
+            env1.insert(
                 param.clone(),
                 TypeScheme {
                     vars: vec![],
@@ -341,58 +341,46 @@ pub fn infer(
                 },
             );
 
-            let (inferred_subst, inferred_body_ty) = infer(body, &lambda_env, generator)?;
+            let (subst1, inferred_body_ty) = infer(body, &env1, generator)?;
 
-            let body_ty = apply_subst_type(&inferred_body_ty, &inferred_subst);
+            let body_ty = apply_subst_type(&inferred_body_ty, &subst1);
 
-            let subst_param_ty = apply_subst_type(&param_ty, &inferred_subst);
+            let param_ty = apply_subst_type(&param_ty, &subst1);
 
             Ok((
-                inferred_subst,
-                Type::Arrow(Box::new(subst_param_ty), Box::new(body_ty)),
+                subst1,
+                Type::Arrow(Box::new(param_ty), Box::new(body_ty)),
             ))
         }
 
         Term::Application(left, right, _) => {
-            // infer f
-            let (s1, f_ty) = infer(left, env, generator)?;
-            // infer a under env updated by s1
-            let env1 = apply_subst_env(env, &s1);
-            let (s2, a_ty) = infer(right, &env1, generator)?;
-            let a_ty = apply_subst_type(&a_ty, &s2);
-            // create fresh return type
+            let (subst1, func_ty) = infer(left, env, generator)?;
+            let env1 = apply_subst_env(env, &subst1);
+            let (subst2, arg_ty) = infer(right, &env1, generator)?;
+            let arg_ty = apply_subst_type(&arg_ty, &subst2);
             let ret_ty = generator.fresh();
-            // enforce f_ty ~ a_ty -> ret_ty
-            let f_ty = apply_subst_type(&f_ty, &s2);
-            let s3 = unify(
-                &f_ty,
-                &Type::Arrow(Box::new(a_ty.clone()), Box::new(ret_ty.clone())),
-                &s2,
+            let func_ty = apply_subst_type(&func_ty, &subst2);
+            let subst3 = unify(
+                &func_ty,
+                &Type::Arrow(Box::new(arg_ty.clone()), Box::new(ret_ty.clone())),
+                &subst2,
             )
-            .map_err(|err| err.with_context(right, &a_ty))?;
-            // compose substitutions
-            let s = compose_subst(&s3, &compose_subst(&s2, &s1));
-            // return
-            let ret_ty = apply_subst_type(&ret_ty, &s);
-            Ok((s, ret_ty))
+            .map_err(|err| err.with_context(right, &arg_ty))?;
+            let subst = compose_subst(&subst3, &compose_subst(&subst2, &subst1));
+            let ret_ty = apply_subst_type(&ret_ty, &subst);
+            Ok((subst, ret_ty))
         }
         Term::Let { name, value, body, .. } => {
-            // infer value
-            let (s1, v_ty) = infer(value, env, generator)?;
-            // update env with s1 and generalize
-            let env1 = apply_subst_env(env, &s1);
-            let v_ty = apply_subst_type(&v_ty, &s1);
-            let scheme = generalize(&v_ty, &env1);
-            // extend env with x : scheme
+            let (subst1, value_ty) = infer(value, env, generator)?;
+            let env1 = apply_subst_env(env, &subst1);
+            let value_ty = apply_subst_type(&value_ty, &subst1);
+            let scheme = generalize(&value_ty, &env1);
             let mut env2 = env1.clone();
             env2.insert(name.clone(), scheme);
-            // infer body in extended env
-            let (s2, body_ty) = infer(body, &env2, generator)?;
-            // compose substitutions
-            let s = compose_subst(&s2, &s1);
-            let body_ty = apply_subst_type(&body_ty, &s);
-            // return
-            Ok((s, body_ty))
+            let (subst2, body_ty) = infer(body, &env2, generator)?;
+            let subst = compose_subst(&subst2, &subst1);
+            let body_ty = apply_subst_type(&body_ty, &subst);
+            Ok((subst, body_ty))
         }
     }
 }
@@ -466,18 +454,18 @@ pub fn infer_statement(
 ) -> Result<Option<Type>, TypeError> {
     match stmt {
         Statement::Let(name, value, _) => {
-            let (subst, ty) = infer(value, env, generator)?;
-            let env1 = apply_subst_env(env, &subst);
-            let ty = apply_subst_type(&ty, &subst);
-            let scheme = generalize(&ty, &env1);
+            let (subst1, value_ty) = infer(value, env, generator)?;
+            let env1 = apply_subst_env(env, &subst1);
+            let value_ty = apply_subst_type(&value_ty, &subst1);
+            let scheme = generalize(&value_ty, &env1);
             *env = env1;
             env.insert(name.clone(), scheme);
             Ok(None)
         }
         Statement::Expr(term, _) => {
-            let (subst, ty) = infer(term, env, generator)?;
-            let ty = apply_subst_type(&ty, &subst);
-            Ok(Some(ty))
+            let (subst, expr_ty) = infer(term, env, generator)?;
+            let expr_ty = apply_subst_type(&expr_ty, &subst);
+            Ok(Some(expr_ty))
         }
     }
 }
