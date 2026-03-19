@@ -15,6 +15,7 @@ pub enum EvalError {
 }
 
 impl std::fmt::Display for EvalError {
+    /// Formats evaluation errors for display.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             EvalError::Type(err) => write!(f, "{}", err.message()),
@@ -34,28 +35,33 @@ pub enum EvalMode {
 }
 
 impl From<TypeError> for EvalError {
+    /// Converts type errors into evaluation errors.
     fn from(err: TypeError) -> Self {
         EvalError::Type(err)
     }
 }
 
 impl From<LexError> for EvalError {
+    /// Converts lex errors into evaluation errors.
     fn from(err: LexError) -> Self {
         EvalError::Lex(err)
     }
 }
 
 impl From<ParseError> for EvalError {
+    /// Converts parse errors into evaluation errors.
     fn from(err: ParseError) -> Self {
         EvalError::Parse(err)
     }
 }
 
+/// Resolves global variables in a term using the environment.
 pub fn resolve(term: &Term, env: &HashMap<String, Term>) -> Term {
     let mut bound = HashSet::new();
     resolve_impl(term, env, &mut bound)
 }
 
+/// Resolves globals while tracking locally bound variables.
 fn resolve_impl(term: &Term, env: &HashMap<String, Term>, bound: &mut HashSet<String>) -> Term {
     match term {
         Term::Var(name, _) => {
@@ -99,6 +105,7 @@ fn resolve_impl(term: &Term, env: &HashMap<String, Term>, bound: &mut HashSet<St
     }
 }
 
+/// Parses and evaluates an input string.
 pub fn evaluate(input: &str, eval_mode: EvalMode) -> Result<Term, EvalError> {
     let tokens = lex(input)?;
     let term = parse_term(tokens)?;
@@ -112,10 +119,12 @@ pub fn evaluate(input: &str, eval_mode: EvalMode) -> Result<Term, EvalError> {
     normalize(&term, eval_mode)
 }
 
+/// Normalizes a term using the requested evaluation mode.
 pub fn normalize(term: &Term, eval_mode: EvalMode) -> Result<Term, EvalError> {
     normalize_with_limit(term, 1_000, eval_mode)
 }
 
+/// Normalizes a term with a maximum step limit.
 pub fn normalize_with_limit(
     term: &Term,
     limit: u32,
@@ -137,10 +146,12 @@ pub fn normalize_with_limit(
     Ok(current)
 }
 
+/// Returns true if the term is a value.
 fn is_value(term: &Term) -> bool {
     matches!(term, Term::Var(_, _) | Term::Lambda(_, _, _, _))
 }
 
+/// Performs one call-by-name reduction step.
 fn step_cbn(term: &Term) -> Option<Term> {
     match term {
         Term::Var(_, _) => None,
@@ -161,6 +172,7 @@ fn step_cbn(term: &Term) -> Option<Term> {
     }
 }
 
+/// Performs one call-by-value reduction step.
 fn step_cbv(term: &Term) -> Option<Term> {
     match term {
         Term::Var(_, _) => None,
@@ -210,6 +222,7 @@ fn step_cbv(term: &Term) -> Option<Term> {
     }
 }
 
+/// Performs one reduction step according to the mode.
 fn step(term: &Term, eval_mode: EvalMode) -> Option<Term> {
     if eval_mode == EvalMode::CallByName {
         step_cbn(term)
@@ -218,6 +231,7 @@ fn step(term: &Term, eval_mode: EvalMode) -> Option<Term> {
     }
 }
 
+/// Renames bound variables in a term.
 fn rename(term: &Term, old: &str, new: &str) -> Term {
     match term {
         Term::Var(name, span) => {
@@ -269,6 +283,7 @@ fn rename(term: &Term, old: &str, new: &str) -> Term {
     }
 }
 
+/// Clones a term while avoiding variable capture.
 fn capture_avoiding_clone(term: &Term, avoid: &HashSet<String>) -> Term {
     match term {
         Term::Var(_, _) => term.clone(),
@@ -336,6 +351,7 @@ fn capture_avoiding_clone(term: &Term, avoid: &HashSet<String>) -> Term {
     }
 }
 
+/// Renames a lambda parameter and returns updated components.
 fn update_lambda(lambda: &Term, new: &str) -> (String, Option<Type>, Term, crate::lexer::Span) {
     match lambda {
         Term::Lambda(param, t, body, span) => {
@@ -346,6 +362,7 @@ fn update_lambda(lambda: &Term, new: &str) -> (String, Option<Type>, Term, crate
     }
 }
 
+/// Creates a fresh name not in the used set.
 fn create_fresh_name(base: &str, used: &HashSet<String>) -> String {
     if !used.contains(base) {
         return base.to_string();
@@ -362,6 +379,7 @@ fn create_fresh_name(base: &str, used: &HashSet<String>) -> String {
     }
 }
 
+/// Collects free variables in a term.
 fn free_vars(term: &Term) -> HashSet<String> {
     match term {
         Term::Var(name, _) => HashSet::from([name.clone()]),
@@ -387,6 +405,7 @@ fn free_vars(term: &Term) -> HashSet<String> {
     }
 }
 
+/// Substitutes a variable with a term, avoiding capture.
 pub fn substitute(term: &Term, var: &str, replacement: &Term) -> Term {
     let free_replacement = free_vars(replacement);
 
@@ -481,38 +500,47 @@ mod tests {
         parser::{parse_term, Term},
     };
 
+    /// Parses a term for tests.
     fn term(input: &str) -> Term {
         parse_term(lex(input).unwrap()).unwrap()
     }
 
+    /// Returns a dummy span for tests.
     fn span() -> Span {
         Span { start: 0, end: 0 }
     }
 
+    /// Builds a variable term with a dummy span.
     fn var(name: &str) -> Term {
         Term::Var(name.into(), span())
     }
 
+    /// Builds a lambda term with a dummy span.
     fn lam(name: &str, body: Term) -> Term {
         Term::Lambda(name.into(), None, Box::new(body), span())
     }
 
+    /// Builds an application term with a dummy span.
     fn app(left: Term, right: Term) -> Term {
         Term::Application(Box::new(left), Box::new(right), span())
     }
 
+    /// Normalizes a term using call-by-value.
     fn normalize_cbv(term: &Term) -> Result<Term, EvalError> {
         normalize(term, EvalMode::CallByValue)
     }
 
+    /// Normalizes a term using call-by-name.
     fn normalize_cbn(term: &Term) -> Result<Term, EvalError> {
         normalize(term, EvalMode::CallByName)
     }
 
+    /// Performs a single call-by-value step.
     fn step_cbv(term: &Term) -> Option<Term> {
         step(term, EvalMode::CallByValue)
     }
 
+    /// Performs a single call-by-name step.
     fn step_cbn(term: &Term) -> Option<Term> {
         step(term, EvalMode::CallByName)
     }
@@ -524,6 +552,7 @@ mod tests {
             use super::*;
 
             #[test]
+            /// Ensures normalization avoids variable capture.
             fn test_normalize_respects_capture_avoidance() {
                 assert_eq!(
                     normalize_cbv(&term("(\\x.\\y.x) y")).unwrap(),
@@ -537,6 +566,7 @@ mod tests {
             }
 
             #[test]
+            /// Ensures normalization reduces simple terms.
             fn test_normalize_simple() {
                 assert_eq!(normalize_cbv(&term("(\\x.x) y")).unwrap(), term("y"));
 
@@ -549,6 +579,7 @@ mod tests {
             }
 
             #[test]
+            /// Ensures let normalization works.
             fn test_normalize_let() {
                 assert_eq!(
                     normalize_cbv(&term("let id = \\x.x in id y")).unwrap(),
@@ -561,6 +592,7 @@ mod tests {
             }
 
             #[test]
+            /// Ensures normalization performs multiple steps.
             fn test_normalize_multiple_steps() {
                 assert_eq!(
                     normalize_cbv(&term("((\\f.f) (\\x.x)) y")).unwrap(),
@@ -580,6 +612,7 @@ mod tests {
             use super::*;
 
             #[test]
+            /// Ensures a basic step reduces as expected.
             fn test_simple_step() {
                 assert_eq!(step_cbv(&term("x")), None);
                 assert_eq!(step_cbv(&term("\\x.x")), None);
@@ -592,6 +625,7 @@ mod tests {
             }
 
             #[test]
+            /// Ensures stuck terms do not reduce.
             fn test_step_stuck_terms() {
                 assert_eq!(step_cbv(&term("x")), None);
                 assert_eq!(step_cbv(&term("\\x.x")), None);
@@ -599,6 +633,7 @@ mod tests {
             }
 
             #[test]
+            /// Ensures beta-reduction steps work.
             fn test_step_simple_beta() {
                 assert_eq!(step_cbv(&term("(\\x.x) y")), Some(term("y")));
 
@@ -608,6 +643,7 @@ mod tests {
             }
 
             #[test]
+            /// Ensures reduction proceeds on the left side.
             fn test_step_reduces_left_side_of_application() {
                 assert_eq!(
                     step_cbv(&term("((\\f.f) (\\x.x)) y")),
@@ -618,6 +654,7 @@ mod tests {
             }
 
             #[test]
+            /// Ensures call-by-value reduces arguments.
             fn test_step_call_by_value_reduces_argument() {
                 assert_eq!(step_cbv(&term("f ((\\x.x) y)")), None);
 
@@ -628,6 +665,7 @@ mod tests {
             }
 
             #[test]
+            /// Ensures reductions preserve the application redex span.
             fn test_step_preserves_redex_span_application() {
                 let input = term("(\\x.x) y");
                 let redex_span = input.span();
@@ -637,6 +675,7 @@ mod tests {
             }
 
             #[test]
+            /// Ensures reductions preserve the let redex span.
             fn test_step_preserves_redex_span_let() {
                 let input = term("let x = y in z");
                 let redex_span = input.span();
@@ -654,6 +693,7 @@ mod tests {
             use super::*;
 
             #[test]
+            /// Ensures call-by-name normalization behaves correctly.
             fn test_normalize_under_call_by_name() {
                 assert_eq!(
                     normalize_cbn(&term("(\\x.z) ((\\y.y) w)")).unwrap(),
@@ -671,6 +711,7 @@ mod tests {
             use super::*;
 
             #[test]
+            /// Ensures call-by-name does not reduce arguments.
             fn test_step_cbn_does_not_reduce_argument() {
                 assert_eq!(step_cbn(&term("f ((\\x.x) y)")), None);
 
@@ -678,6 +719,7 @@ mod tests {
             }
 
             #[test]
+            /// Ensures call-by-name treats let bindings lazily.
             fn test_step_cbn_let_is_lazy() {
                 assert_eq!(step_cbn(&term("let x = ((\\y.y) w) in z")), Some(term("z")));
             }
@@ -688,6 +730,7 @@ mod tests {
         use super::*;
 
         #[test]
+        /// Ensures update_lambda renames parameters correctly.
         fn test_simple() {
             assert_eq!(
                 update_lambda(&lam("y", app(var("x"), var("y"))), "y1",),
@@ -704,6 +747,7 @@ mod tests {
         use super::*;
 
         #[test]
+        /// Ensures rename behaves correctly for basic cases.
         fn test_simple() {
             assert_eq!(
                 rename(&app(var("x"), var("y")), "y", "y1"),
@@ -721,6 +765,7 @@ mod tests {
         use super::*;
 
         #[test]
+        /// Ensures fresh name generation skips used names.
         fn test_simple() {
             assert_eq!(
                 create_fresh_name(
@@ -744,6 +789,7 @@ mod tests {
         use super::*;
 
         #[test]
+        /// Ensures basic substitution works.
         fn test_simple() {
             assert_eq!(substitute(&term("x"), "x", &term("y")), term("y"));
             assert_eq!(substitute(&term("z"), "x", &term("y")), term("z"));
@@ -761,6 +807,7 @@ mod tests {
         }
 
         #[test]
+        /// Ensures substitution respects shadowing.
         fn test_substitute_shadowing() {
             assert_eq!(substitute(&term("\\x.x"), "x", &term("y")), term("\\x.x"));
 
@@ -783,6 +830,7 @@ mod tests {
         }
 
         #[test]
+        /// Ensures substitution avoids capture in simple cases.
         fn test_substitute_capture_avoidance_simple() {
             assert_eq!(substitute(&term("\\y.x"), "x", &term("y1")), term("\\y.y1"));
 
@@ -805,6 +853,7 @@ mod tests {
         }
 
         #[test]
+        /// Ensures substitution avoids capture with compound replacements.
         fn test_substitute_capture_avoidance_with_compound_replacement() {
             assert_eq!(
                 substitute(&term("\\y.x"), "x", &term("y z")),
@@ -833,6 +882,7 @@ mod tests {
         }
 
         #[test]
+        /// Ensures substitution works under nested lambdas.
         fn test_substitute_nested_lambdas() {
             assert_eq!(
                 substitute(&term("\\a.\\b.x a b"), "x", &term("y")),
@@ -861,6 +911,7 @@ mod tests {
         }
 
         #[test]
+        /// Ensures substitution respects nested shadowing.
         fn test_substitute_nested_shadowing() {
             assert_eq!(
                 substitute(&term("\\y.\\y.y"), "x", &term("z")),
@@ -889,6 +940,7 @@ mod tests {
         }
 
         #[test]
+        /// Ensures substitution works in complex applications.
         fn test_substitute_more_complex_applications() {
             assert_eq!(
                 substitute(&term("(x y) z"), "x", &term("f")),
@@ -917,6 +969,7 @@ mod tests {
         }
 
         #[test]
+        /// Ensures substitution handles replacements with free vars.
         fn test_substitute_replacement_with_free_vars() {
             assert_eq!(
                 substitute(&term("\\a.x"), "x", &term("y a")),
@@ -940,6 +993,7 @@ mod tests {
         }
 
         #[test]
+        /// Ensures substitution leaves identity-like cases unchanged.
         fn test_substitute_identity_like_cases() {
             assert_eq!(
                 substitute(&term("\\x.\\y.x"), "x", &term("z")),
@@ -963,6 +1017,7 @@ mod tests {
         }
 
         #[test]
+        /// Ensures basic substitution results for variables.
         fn test_naive_substitution() {
             assert_eq!(substitute(&var("x"), "x", &var("y")), var("y"));
             assert_eq!(substitute(&var("z"), "x", &var("y")), var("z"));
@@ -986,6 +1041,7 @@ mod tests {
         use super::*;
 
         #[test]
+        /// Ensures free variable collection works.
         fn test_free_vars() {
             assert_eq!(free_vars(&term("x")), HashSet::from(["x".into()]));
             assert_eq!(free_vars(&term("\\x.x")), HashSet::new());

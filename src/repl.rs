@@ -7,6 +7,7 @@ use crate::{
     lexer::Span,
 };
 
+/// Runs the interactive REPL loop.
 pub fn repl() {
     let mut rl = DefaultEditor::new().unwrap();
 
@@ -45,10 +46,12 @@ pub fn repl() {
     }
 }
 
+/// Prints a formatted error for a REPL input.
 fn print_error(source: &str, err: EvalError) {
     eprintln!("{}", format_eval_error(source, err));
 }
 
+/// Formats evaluation errors with source spans when available.
 fn format_eval_error(source: &str, err: EvalError) -> String {
     match err {
         EvalError::Lex(err) => {
@@ -96,6 +99,7 @@ mod tests {
     };
 
     #[test]
+    /// Ensures lex errors format correctly.
     fn test_format_eval_error_lex() {
         let source = "@";
         let err = EvalError::Lex(LexError::InvalidChar {
@@ -108,6 +112,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures parse missing-dot errors format correctly.
     fn test_format_eval_error_parse_missing_dot() {
         let source = "\\x";
         let err = EvalError::Parse(ParseError::MissingToken {
@@ -120,6 +125,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures parse unexpected-token errors format correctly.
     fn test_format_eval_error_parse_unexpected_token() {
         let source = "x)";
         let err = EvalError::Parse(ParseError::UnexpectedToken {

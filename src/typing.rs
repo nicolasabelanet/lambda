@@ -20,6 +20,7 @@ pub enum TypeError {
     ExpectedFunction { found: Type },
 }
 impl Display for TypeError {
+    /// Formats type errors for display.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TypeError::UnboundVar(name) => write!(f, "unbound variable '{name}'"),
@@ -52,10 +53,12 @@ pub struct TypeMismatchContext {
 }
 
 impl TypeError {
+    /// Returns a human-friendly error message.
     pub fn message(&self) -> String {
         self.to_string()
     }
 
+    /// Adds term and type context to a mismatch error.
     fn with_context(self, term: &Term, ty: &Type) -> TypeError {
         match self {
             TypeError::TypeMismatch {
@@ -85,6 +88,7 @@ pub enum Type {
 }
 
 impl Display for Type {
+    /// Formats types for display.
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Type::Var(name) => write!(f, "{name}"),
@@ -120,10 +124,12 @@ pub struct TypeVarGenerator {
 }
 
 impl TypeVarGenerator {
+    /// Creates a new type variable generator.
     pub fn new() -> TypeVarGenerator {
         TypeVarGenerator { next: 0u32 }
     }
 
+    /// Generates a fresh meta type variable.
     fn fresh(&mut self) -> Type {
         let fresh_type = Type::Meta(self.next);
         self.next += 1;
@@ -132,11 +138,13 @@ impl TypeVarGenerator {
 }
 
 impl Default for TypeVarGenerator {
+    /// Creates a default type variable generator.
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// Collects free type variables in a type.
 fn free_type_vars_type(ty: &Type) -> HashSet<TypeVar> {
     match ty {
         Type::Var(_) => HashSet::new(),
@@ -150,6 +158,7 @@ fn free_type_vars_type(ty: &Type) -> HashSet<TypeVar> {
     }
 }
 
+/// Collects free type variables in a type scheme.
 fn free_type_vars_scheme(scheme: &TypeScheme) -> HashSet<TypeVar> {
     let mut free_vars = free_type_vars_type(&scheme.ty);
 
@@ -160,6 +169,7 @@ fn free_type_vars_scheme(scheme: &TypeScheme) -> HashSet<TypeVar> {
     free_vars
 }
 
+/// Collects free type variables in a type environment.
 fn free_type_vars_env(env: &TypeEnv) -> HashSet<TypeVar> {
     let mut free_vars = HashSet::new();
 
@@ -170,6 +180,7 @@ fn free_type_vars_env(env: &TypeEnv) -> HashSet<TypeVar> {
     free_vars
 }
 
+/// Generalizes a type with respect to an environment.
 fn generalize(ty: &Type, env: &TypeEnv) -> TypeScheme {
     let free_type_vars = free_type_vars_type(ty);
     let free_env_vars = free_type_vars_env(env);
@@ -180,11 +191,13 @@ fn generalize(ty: &Type, env: &TypeEnv) -> TypeScheme {
     }
 }
 
+/// Instantiates a type scheme with fresh meta variables.
 fn instantiate(scheme: &TypeScheme, generator: &mut TypeVarGenerator) -> Type {
     let mapping = HashMap::from_iter(scheme.vars.iter().map(|var| (*var, generator.fresh())));
     replace_meta(&scheme.ty, &mapping)
 }
 
+/// Replaces meta variables using a mapping.
 fn replace_meta(ty: &Type, mapping: &HashMap<TypeVar, Type>) -> Type {
     match ty {
         Type::Var(_) => ty.clone(),
@@ -205,6 +218,7 @@ fn replace_meta(ty: &Type, mapping: &HashMap<TypeVar, Type>) -> Type {
     }
 }
 
+/// Applies a substitution to a type.
 fn apply_subst_type(ty: &Type, subst: &Subst) -> Type {
     match ty {
         Type::Var(_) => ty.clone(),
@@ -225,6 +239,7 @@ fn apply_subst_type(ty: &Type, subst: &Subst) -> Type {
     }
 }
 
+/// Applies a substitution to a type scheme.
 fn apply_subst_scheme(scheme: &TypeScheme, subst: &Subst) -> TypeScheme {
     let mut filtered_subst = subst.clone();
 
@@ -240,12 +255,14 @@ fn apply_subst_scheme(scheme: &TypeScheme, subst: &Subst) -> TypeScheme {
     }
 }
 
+/// Applies a substitution to every scheme in an environment.
 fn apply_subst_env(env: &TypeEnv, subst: &Subst) -> TypeEnv {
     env.iter()
         .map(|(key, scheme)| (key.clone(), apply_subst_scheme(scheme, subst)))
         .collect()
 }
 
+/// Composes two substitutions.
 fn compose_subst(subst1: &Subst, subst2: &Subst) -> Subst {
     let mut combined_subst: HashMap<_, _> = subst2
         .iter()
@@ -261,6 +278,7 @@ fn compose_subst(subst1: &Subst, subst2: &Subst) -> Subst {
     combined_subst
 }
 
+/// Checks whether a type variable occurs within a type.
 fn occurs(type_var: TypeVar, ty: &Type) -> bool {
     match ty {
         Type::Var(_) => false,
@@ -270,6 +288,7 @@ fn occurs(type_var: TypeVar, ty: &Type) -> bool {
     }
 }
 
+/// Unifies a meta variable with a type.
 fn unify_var(type_var: TypeVar, ty: &Type, subst: &Subst) -> Result<Subst, TypeError> {
     let ty = apply_subst_type(ty, subst);
 
@@ -292,6 +311,7 @@ fn unify_var(type_var: TypeVar, ty: &Type, subst: &Subst) -> Result<Subst, TypeE
     Ok(updated_subst)
 }
 
+/// Unifies two types with the given substitution.
 fn unify(left_ty: &Type, right_ty: &Type, subst: &Subst) -> Result<Subst, TypeError> {
     let left_ty = apply_subst_type(left_ty, subst);
     let right_ty = apply_subst_type(right_ty, subst);
@@ -312,6 +332,7 @@ fn unify(left_ty: &Type, right_ty: &Type, subst: &Subst) -> Result<Subst, TypeEr
     }
 }
 
+/// Infers the type of a term.
 pub fn infer(
     term: &Term,
     env: &TypeEnv,
@@ -385,6 +406,7 @@ pub fn infer(
     }
 }
 
+/// Collects free term variables for type inference.
 fn collect_free_vars(term: &Term, bound: &mut HashSet<String>, free: &mut HashSet<String>) {
     match term {
         Term::Var(name, _) => {
@@ -410,6 +432,7 @@ fn collect_free_vars(term: &Term, bound: &mut HashSet<String>, free: &mut HashSe
     }
 }
 
+/// Seeds the type environment with free variables from a term.
 pub fn seed_free_vars_term(term: &Term, env: &mut TypeEnv, generator: &mut TypeVarGenerator) {
     let mut bound = HashSet::new();
     let mut free = HashSet::new();
@@ -423,6 +446,7 @@ pub fn seed_free_vars_term(term: &Term, env: &mut TypeEnv, generator: &mut TypeV
     }
 }
 
+/// Seeds the type environment with free variables from a statement.
 pub fn seed_free_vars_statement(
     stmt: &Statement,
     env: &mut TypeEnv,
@@ -447,6 +471,7 @@ pub fn seed_free_vars_statement(
     }
 }
 
+/// Infers the type of a statement.
 pub fn infer_statement(
     stmt: &Statement,
     env: &mut TypeEnv,
@@ -475,22 +500,27 @@ mod tests {
     use super::*;
     use crate::{lexer::lex, parser::parse_term};
 
+    /// Returns a dummy span for tests.
     fn span() -> Span {
         Span { start: 0, end: 0 }
     }
 
+    /// Builds a variable term with a dummy span.
     fn var(name: &str) -> Term {
         Term::Var(name.into(), span())
     }
 
+    /// Builds a lambda term with a dummy span.
     fn lam(name: &str, body: Term) -> Term {
         Term::Lambda(name.into(), None, Box::new(body), span())
     }
 
+    /// Builds an application term with a dummy span.
     fn app(left: Term, right: Term) -> Term {
         Term::Application(Box::new(left), Box::new(right), span())
     }
 
+    /// Builds a let term with a dummy span.
     fn let_term(name: &str, value: Term, body: Term) -> Term {
         Term::Let {
             name: name.into(),
@@ -501,6 +531,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures free type variables are collected from types.
     fn test_free_type_vars_type() {
         assert_eq!(free_type_vars_type(&Type::Var("A".into())), HashSet::new());
         assert_eq!(free_type_vars_type(&Type::Meta(3)), HashSet::from_iter([3]));
@@ -517,6 +548,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures free type variables are collected from schemes.
     fn test_free_type_vars_scheme() {
         let scheme = TypeScheme {
             vars: vec![1],
@@ -527,6 +559,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures free type variables are collected from environments.
     fn test_free_type_vars_env() {
         let mut env: TypeEnv = HashMap::new();
         env.insert(
@@ -548,6 +581,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures generalize quantifies free variables.
     fn test_generalize_quantifies_free_vars() {
         let env: TypeEnv = HashMap::new();
         let ty = Type::Arrow(Box::new(Type::Meta(1)), Box::new(Type::Meta(2)));
@@ -560,6 +594,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures generalize excludes environment variables.
     fn test_generalize_excludes_env_vars() {
         let mut env: TypeEnv = HashMap::new();
         env.insert(
@@ -577,6 +612,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures instantiate replaces bound variables.
     fn test_instantiate_replaces_bound_vars() {
         let scheme = TypeScheme {
             vars: vec![1, 2],
@@ -596,6 +632,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures substitutions replace meta variables in types.
     fn test_apply_subst_type_replaces_metas() {
         let ty = Type::Arrow(Box::new(Type::Meta(1)), Box::new(Type::Meta(2)));
         let subst = HashMap::from_iter([
@@ -624,6 +661,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures substitutions ignore scheme bound vars.
     fn test_apply_subst_scheme_ignores_bound_vars() {
         let scheme = TypeScheme {
             vars: vec![1],
@@ -641,6 +679,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures substitutions apply across the environment.
     fn test_apply_subst_env_updates_all_schemes() {
         let mut env: TypeEnv = HashMap::new();
         env.insert(
@@ -670,6 +709,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures composition merges and applies substitutions.
     fn test_compose_subst_merges_and_applies() {
         let s1 = HashMap::from_iter([(1, Type::Var("A".into())), (2, Type::Meta(3))]);
         let s2 = HashMap::from_iter([(2, Type::Var("B".into())), (4, Type::Meta(1))]);
@@ -682,6 +722,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures occurs check detects nested metas.
     fn test_occurs_detects_nested_meta() {
         let ty = Type::Arrow(Box::new(Type::Meta(1)), Box::new(Type::Var("A".into())));
         assert!(occurs(1, &ty));
@@ -689,6 +730,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures unify_var binds a meta variable.
     fn test_unify_var_binds_meta() {
         let subst = HashMap::new();
         let updated = unify_var(1, &Type::Var("A".into()), &subst).unwrap();
@@ -696,6 +738,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures unify_var performs the occurs check.
     fn test_unify_var_occurs_check() {
         let subst = HashMap::new();
         let ty = Type::Arrow(Box::new(Type::Meta(1)), Box::new(Type::Var("A".into())));
@@ -704,6 +747,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures unification works for arrow types.
     fn test_unify_arrows() {
         let subst = HashMap::new();
         let ty1 = Type::Arrow(Box::new(Type::Meta(1)), Box::new(Type::Var("A".into())));
@@ -714,6 +758,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures unification fails on mismatched types.
     fn test_unify_mismatch() {
         let subst = HashMap::new();
         let err = unify(&Type::Var("A".into()), &Type::Var("B".into()), &subst).unwrap_err();
@@ -721,6 +766,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures inference works for identity lambdas.
     fn test_infer_identity_lambda() {
         let term = lam("x", var("x"));
         let env: TypeEnv = HashMap::new();
@@ -738,6 +784,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures inference preserves composition structure.
     fn test_infer_composition_shape() {
         let term = lam("f", lam("x", app(var("f"), var("x"))));
         let env: TypeEnv = HashMap::new();
@@ -758,6 +805,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures let-polymorphism is inferred.
     fn test_infer_let_polymorphism() {
         let term = let_term("id", lam("x", var("x")), app(var("id"), var("id")));
         let env: TypeEnv = HashMap::new();
@@ -774,6 +822,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures inference reports occurs check errors.
     fn test_infer_occurs_check_error() {
         let term = lam("x", app(var("x"), var("x")));
         let env: TypeEnv = HashMap::new();
@@ -784,6 +833,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures type mismatch spans point to the argument.
     fn test_type_mismatch_span_points_to_argument() {
         let term = parse_term(lex("(\\x: A. x) (\\y: B. y)").unwrap()).unwrap();
         let arg_span = match &term {

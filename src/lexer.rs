@@ -19,12 +19,14 @@ pub enum LexError {
 }
 
 impl LexError {
+    /// Returns the span associated with this lex error.
     pub fn span(&self) -> Span {
         match self {
             LexError::InvalidChar { span, .. } => span.clone(),
         }
     }
 
+    /// Returns a human-friendly error message.
     pub fn message(&self) -> String {
         match self {
             LexError::InvalidChar { ch, .. } => format!("invalid character '{ch}'"),
@@ -49,11 +51,13 @@ struct Lexer {
     input: Vec<char>,
 }
 
+/// Returns true if a character is valid in identifiers.
 fn is_ident_char(c: char) -> bool {
     c == '_' || c.is_ascii_alphanumeric()
 }
 
 impl Lexer {
+    /// Creates a new lexer for the input string.
     fn new(input: &str) -> Lexer {
         Lexer {
             pos: 0,
@@ -61,6 +65,7 @@ impl Lexer {
         }
     }
 
+    /// Lexes an identifier or keyword token.
     fn lex_ident(&mut self) -> Token {
         let start = self.pos;
         let mut ident = String::new();
@@ -90,6 +95,7 @@ impl Lexer {
         }
     }
 
+    /// Builds a token with the current cursor span.
     fn simple_token(&self, kind: TokenKind, start: usize) -> Token {
         Token {
             kind,
@@ -100,6 +106,7 @@ impl Lexer {
         }
     }
 
+    /// Lexes the next token from the input stream.
     fn next_token(&mut self) -> Result<Token, LexError> {
         self.skip_whitespace();
 
@@ -164,20 +171,24 @@ impl Lexer {
         }
     }
 
+    /// Peeks ahead by offset characters without consuming.
     fn peek_n(&self, offset: usize) -> Option<char> {
         self.input.get(self.pos + offset).copied()
     }
 
+    /// Peeks at the current character without consuming it.
     fn peek(&self) -> Option<char> {
         self.input.get(self.pos).copied()
     }
 
+    /// Advances the cursor by one character.
     fn advance(&mut self) {
         if self.pos < self.input.len() {
             self.pos += 1;
         }
     }
 
+    /// Advances past whitespace characters.
     fn skip_whitespace(&mut self) {
         while let Some(c) = self.peek()
             && c.is_whitespace()
@@ -187,6 +198,7 @@ impl Lexer {
     }
 }
 
+/// Lexes an input string into a list of tokens.
 pub fn lex(input: &str) -> Result<Vec<Token>, LexError> {
     let mut tokens = Vec::new();
     let mut lexer = Lexer::new(input);
@@ -217,6 +229,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures identifiers lex correctly.
     fn test_lone_ident() {
         assert_eq!(
             kinds(lex("x").unwrap()),
@@ -241,6 +254,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures lambda tokens lex correctly.
     fn test_lone_lambda() {
         assert_eq!(
             kinds(lex("\\").unwrap()),
@@ -253,6 +267,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures dot tokens lex correctly.
     fn test_lone_dot() {
         assert_eq!(
             kinds(lex(".").unwrap()),
@@ -261,6 +276,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures left paren tokens lex correctly.
     fn test_lone_lparen() {
         assert_eq!(
             kinds(lex("(").unwrap()),
@@ -269,6 +285,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures right paren tokens lex correctly.
     fn test_lone_rparen() {
         assert_eq!(
             kinds(lex(")").unwrap()),
@@ -277,6 +294,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures keywords and equals tokens lex correctly.
     fn test_keywords_and_equals() {
         assert_eq!(
             kinds(lex("let").unwrap()),
@@ -301,6 +319,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures let expression tokens lex correctly.
     fn test_let_expression_tokens() {
         assert_eq!(
             kinds(lex("let x = \\y.y in x").unwrap()),
@@ -320,6 +339,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures identifier boundaries are handled correctly.
     fn test_ident_boundary() {
         assert_eq!(
             kinds(lex("(abc)").unwrap()),
@@ -356,6 +376,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures whitespace is skipped by the lexer.
     fn test_whitespace_removal() {
         assert_eq!(
             kinds(lex("\n\t  \\x. x\r\n").unwrap()),
@@ -382,11 +403,13 @@ mod tests {
     }
 
     #[test]
+    /// Ensures empty input lexes to EOF.
     fn test_empty() {
         assert_eq!(kinds(lex("").unwrap()), vec![TokenKind::EOF]);
     }
 
     #[test]
+    /// Ensures whitespace-only input lexes to EOF.
     fn test_whitespace_only() {
         assert_eq!(
             kinds(lex("          \t\t\t\t \r \n         \t").unwrap()),
@@ -395,6 +418,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures general expressions lex correctly.
     fn test_expressions() {
         assert_eq!(
             kinds(lex("(\\x.x) y").unwrap()),
@@ -412,6 +436,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures colon and arrow tokens lex correctly.
     fn test_colon_and_arrow_tokens() {
         assert_eq!(
             kinds(lex("x: A -> B").unwrap()),
@@ -427,6 +452,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures EOF is stable across repeated lexing.
     fn test_eof_stability() {
         let mut lex = Lexer::new("x");
         assert_eq!(lex.next_token().unwrap().kind, TokenKind::Ident("x".into()));
@@ -436,6 +462,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures invalid characters yield a lex error.
     fn test_invalid_char() {
         let err = lex("@").unwrap_err();
         assert_eq!(err.message(), "invalid character '@'");

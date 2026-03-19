@@ -1,5 +1,6 @@
 use crate::lexer::Span;
 
+/// Formats an error message with a source span indicator.
 pub fn format_span_error(source: &str, message: &str, span: Span) -> String {
     let (line_no, col, line) = line_info(source, span.start);
     let underline_len = span.end.saturating_sub(span.start).max(1);
@@ -15,6 +16,7 @@ pub fn format_span_error(source: &str, message: &str, span: Span) -> String {
     output
 }
 
+/// Returns line number, column, and line text for a position.
 fn line_info(source: &str, pos: usize) -> (usize, usize, String) {
     let mut line_start = 0usize;
     let mut line_no = 1usize;
@@ -46,6 +48,7 @@ mod tests {
     use crate::{diagnostic::format_span_error, lexer::Span};
 
     #[test]
+    /// Ensures end-of-line spans format correctly.
     fn test_format_span_error_end_of_line() {
         let output = format_span_error("\\x", "expected '.'", Span { start: 2, end: 2 });
         let expected = "error: expected '.'\n --> line 1, col 3\n  |\n1 | \\x\n  |   ^";
@@ -53,6 +56,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures range spans format correctly.
     fn test_format_span_error_range() {
         let output = format_span_error("abc", "expected term", Span { start: 1, end: 3 });
         let expected = "error: expected term\n --> line 1, col 2\n  |\n1 | abc\n  |  ^^";

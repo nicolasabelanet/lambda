@@ -10,6 +10,7 @@ use crate::{
     util::term,
 };
 
+/// Returns the standard library term environment.
 fn stdlib() -> HashMap<String, Term> {
     HashMap::from_iter([
         ("true".to_string(), term(r"\t.\f.t")),
@@ -21,6 +22,7 @@ fn stdlib() -> HashMap<String, Term> {
     ])
 }
 
+/// Returns the standard library type environment.
 fn stdlib_types() -> TypeEnv {
     TypeEnv::from_iter([
         (
@@ -88,6 +90,7 @@ pub struct Interpreter {
 }
 
 impl Interpreter {
+    /// Creates a new interpreter with the given evaluation mode.
     pub fn new(eval_mode: EvalMode) -> Self {
         Interpreter {
             env: stdlib(),
@@ -97,6 +100,7 @@ impl Interpreter {
         }
     }
 
+    /// Parses, type-checks, and evaluates a statement.
     pub fn eval_statement(&mut self, input: &str) -> Result<Option<(Term, Type)>, EvalError> {
         let ast = parse(lex(input)?)?;
 
@@ -130,6 +134,7 @@ mod tests {
         use crate::{eval::EvalMode, interpreter::Interpreter, util::term};
 
         #[test]
+        /// Ensures global let bindings are evaluated and stored.
         fn test_interpreter_global_let() {
             let mut interpreter = Interpreter::new(EvalMode::CallByValue);
             assert_eq!(interpreter.eval_statement("let id = \\x.x").unwrap(), None);

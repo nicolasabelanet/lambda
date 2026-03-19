@@ -34,6 +34,7 @@ pub enum Statement {
 }
 
 impl PartialEq for Term {
+    /// Compares terms for equality ignoring spans.
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Term::Var(name, _), Term::Var(other, _)) => name == other,
@@ -61,6 +62,7 @@ impl PartialEq for Term {
 }
 
 impl PartialEq for Statement {
+    /// Compares statements for equality ignoring spans.
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Statement::Let(name, term, _), Statement::Let(other_name, other_term, _)) => {
@@ -89,6 +91,7 @@ pub enum ParseError {
 }
 
 impl Display for ParseError {
+    /// Formats parse errors for display.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ParseError::UnexpectedToken { expected, found: _ } => {
@@ -105,6 +108,7 @@ impl Display for ParseError {
 }
 
 impl ParseError {
+    /// Returns the span associated with this parse error.
     pub fn span(&self) -> crate::lexer::Span {
         match self {
             ParseError::UnexpectedToken { found, .. } => crate::lexer::Span {
@@ -122,6 +126,7 @@ impl ParseError {
         }
     }
 
+    /// Returns a human-friendly error message.
     pub fn message(&self) -> String {
         match self {
             ParseError::UnexpectedToken { expected, .. } => {
@@ -138,6 +143,7 @@ impl ParseError {
 }
 
 impl Display for Term {
+    /// Pretty-prints a term without spans.
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Term::Var(name, _) => write!(f, "{name}"),
@@ -169,6 +175,7 @@ impl Display for Term {
 }
 
 impl Term {
+    /// Returns the span associated with this term.
     pub fn span(&self) -> Span {
         match self {
             Term::Var(_, span) => span.clone(),
@@ -178,6 +185,7 @@ impl Term {
         }
     }
 
+    /// Returns a copy of this term with a new span.
     pub fn with_span(self, span: Span) -> Term {
         match self {
             Term::Var(name, _) => Term::Var(name, span),
@@ -196,6 +204,7 @@ impl Term {
 }
 
 impl Statement {
+    /// Returns the span associated with this statement.
     pub fn span(&self) -> Span {
         match self {
             Statement::Let(_, _, span) => span.clone(),
@@ -210,28 +219,34 @@ struct Parser {
 }
 
 impl Parser {
+    /// Creates a new parser for a token stream.
     fn new(input: Vec<Token>) -> Parser {
         Parser { pos: 0, input }
     }
 
+    /// Peeks at the current token without consuming it.
     fn peek(&self) -> Option<&Token> {
         self.input.get(self.pos)
     }
 
+    /// Returns true if the current token matches the kind.
     fn peek_is(&self, kind: &TokenKind) -> bool {
         matches!(self.peek(), Some(Token { kind: k, .. }) if k == kind)
     }
 
+    /// Advances to the next token.
     fn advance(&mut self) {
         if self.pos < self.input.len() {
             self.pos += 1;
         }
     }
 
+    /// Returns the end position of the final token.
     fn eof_pos(&self) -> usize {
         self.input.last().map(|token| token.span.end).unwrap_or(0)
     }
 
+    /// Consumes a token or returns an unexpected token error.
     fn expect_or_unexpected(
         &mut self,
         kind: TokenKind,
@@ -253,6 +268,7 @@ impl Parser {
         }
     }
 
+    /// Consumes a token or returns a missing token error.
     fn expect(&mut self, kind: TokenKind, expected: &'static str) -> Result<(), ParseError> {
         match self.peek() {
             Some(token) if token.kind == kind => {
@@ -270,6 +286,7 @@ impl Parser {
         }
     }
 
+    /// Parses an expression or a parenthesized expression.
     fn parse_expr_with_parens<T>(
         &mut self,
         inner_parser: fn(&mut Parser) -> Result<T, ParseError>,
@@ -308,10 +325,12 @@ impl Parser {
         }
     }
 
+    /// Parses a type atom, possibly in parentheses.
     fn parse_type_atom(&mut self) -> Result<Type, ParseError> {
         self.parse_expr_with_parens(Parser::parse_type, "type", Type::Var)
     }
 
+    /// Parses a term atom, possibly in parentheses.
     fn parse_atom(&mut self) -> Result<Term, ParseError> {
         let token = match self.peek() {
             Some(token) => token,
@@ -364,6 +383,7 @@ impl Parser {
         }
     }
 
+    /// Returns true if the next token can start an atom.
     fn is_next_token_atom(&self) -> bool {
         matches!(
             self.peek(),
@@ -377,6 +397,7 @@ impl Parser {
         )
     }
 
+    /// Parses left-associative applications.
     fn parse_application(&mut self) -> Result<Term, ParseError> {
         let mut left = self.parse_atom()?;
 
@@ -393,6 +414,7 @@ impl Parser {
         Ok(left)
     }
 
+    /// Parses an identifier token.
     fn parse_identifier(&mut self) -> Result<(String, Span), ParseError> {
         match self.peek() {
             Some(Token {
@@ -415,6 +437,7 @@ impl Parser {
         }
     }
 
+    /// Parses a lambda expression.
     fn parse_lambda(&mut self) -> Result<Term, ParseError> {
         let lambda_span = match self.peek() {
             Some(Token {
@@ -457,6 +480,7 @@ impl Parser {
         Ok(Term::Lambda(identifier, ty, Box::new(body), span))
     }
 
+    /// Parses a function type.
     fn parse_type(&mut self) -> Result<Type, ParseError> {
         let left = self.parse_type_atom()?;
 
@@ -469,6 +493,7 @@ impl Parser {
         }
     }
 
+    /// Parses a term.
     fn parse_term(&mut self) -> Result<Term, ParseError> {
         match self.peek() {
             Some(Token {
@@ -494,11 +519,13 @@ impl Parser {
         }
     }
 
+    /// Parses a scoped let body after the `in` keyword.
     fn parse_scoped_let_tail(&mut self) -> Result<Term, ParseError> {
         self.expect_or_unexpected(TokenKind::In, "in")?;
         self.parse_term()
     }
 
+    /// Parses a let binding head.
     fn parse_let_head(&mut self) -> Result<(String, Term, Span), ParseError> {
         let let_span = match self.peek() {
             Some(Token {
@@ -529,6 +556,7 @@ impl Parser {
         Ok((name, value, let_span))
     }
 
+    /// Parses a statement (let binding or expression).
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         match self.peek() {
             Some(Token {
@@ -581,6 +609,7 @@ impl Parser {
     }
 }
 
+/// Combines two spans into a single covering span.
 fn merge_span(start: &Span, end: &Span) -> Span {
     Span {
         start: start.start,
@@ -588,6 +617,7 @@ fn merge_span(start: &Span, end: &Span) -> Span {
     }
 }
 
+/// Parses a full statement from a token stream.
 pub fn parse(input: Vec<Token>) -> Result<Statement, ParseError> {
     let mut parser = Parser::new(input);
     let statement = parser.parse_statement()?;
@@ -605,6 +635,7 @@ pub fn parse(input: Vec<Token>) -> Result<Statement, ParseError> {
     }
 }
 
+/// Parses a term from a token stream.
 pub fn parse_term(input: Vec<Token>) -> Result<Term, ParseError> {
     let mut parser = Parser::new(input);
     let term = parser.parse_term()?;
@@ -629,27 +660,33 @@ mod tests {
         parser::{parse, parse_term, ParseError, Statement, Term},
     };
 
+    /// Lexes and parses a term from a string.
     fn lex_and_parse(input: &str) -> Term {
         let tokens = lex(input).unwrap();
         parse_term(tokens).unwrap()
     }
 
+    /// Returns a dummy span for tests.
     fn span() -> Span {
         Span { start: 0, end: 0 }
     }
 
+    /// Builds a variable term with a dummy span.
     fn var(name: &str) -> Term {
         Term::Var(name.into(), span())
     }
 
+    /// Builds a lambda term with a dummy span.
     fn lam(name: &str, body: Term) -> Term {
         Term::Lambda(name.into(), None, Box::new(body), span())
     }
 
+    /// Builds an application term with a dummy span.
     fn app(left: Term, right: Term) -> Term {
         Term::Application(Box::new(left), Box::new(right), span())
     }
 
+    /// Builds a let term with a dummy span.
     fn let_term(name: &str, value: Term, body: Term) -> Term {
         Term::Let {
             name: name.into(),
@@ -659,12 +696,14 @@ mod tests {
         }
     }
 
+    /// Asserts that pretty-printing and parsing is stable.
     fn assert_roundtrip(term: Term) {
         let rountrip = lex_and_parse(&term.to_string());
         assert_eq!(term, rountrip);
     }
 
     #[test]
+    /// Ensures basic roundtrip parsing works.
     fn test_roundtrip() {
         assert_roundtrip(var("x"));
         assert_roundtrip(lam("x", app(var("x"), var("y"))));
@@ -675,6 +714,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures the pretty-printer formats applications and lambdas.
     fn test_pretty_printer() {
         assert_eq!(app(lam("x", var("x")), var("y")).to_string(), "(\\x.x) y");
 
@@ -688,6 +728,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures the parser builds the expected AST shape.
     fn test_parser() {
         assert_eq!(lex_and_parse("x"), var("x"));
         assert_eq!(lex_and_parse("f x"), app(var("f"), var("x")));
@@ -716,6 +757,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures top-level let parsing works.
     fn test_parse_statement_global_let() {
         let tokens = lex("let x = y").unwrap();
         let statement = parse(tokens).unwrap();
@@ -726,6 +768,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures application spans cover the expected range.
     fn test_application_span() {
         let term = lex_and_parse("(\\x.x) y");
         match term {
@@ -742,6 +785,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures missing dot errors are reported.
     fn test_parse_errors_missing_dot() {
         let tokens = lex("\\x").unwrap();
         let err = parse_term(tokens).unwrap_err();
@@ -756,6 +800,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures missing right parenthesis errors are reported.
     fn test_parse_errors_missing_rparen() {
         let tokens = lex("(x").unwrap();
         let err = parse_term(tokens).unwrap_err();
@@ -769,6 +814,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures missing term errors are reported.
     fn test_parse_errors_missing_term() {
         let tokens = lex("\\x.(").unwrap();
         let err = parse_term(tokens).unwrap_err();
@@ -782,6 +828,7 @@ mod tests {
     }
 
     #[test]
+    /// Ensures trailing tokens are rejected.
     fn test_parse_errors_trailing_tokens() {
         let tokens = lex("x)").unwrap();
         let err = parse_term(tokens).unwrap_err();
