@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
 use crate::{
-    eval::{EvalError, EvalMode, normalize_with_limit, resolve},
+    eval::{normalize_with_limit, resolve, EvalError, EvalMode},
     lexer::lex,
-    parser::{Statement, Term, parse},
+    parser::{parse, Statement, Term},
     typing::{
-        Type, TypeEnv, TypeScheme, TypeVar, TypeVarGenerator, infer_statement,
-        seed_free_vars_statement,
+        infer_statement, seed_free_vars_statement, Type, TypeEnv, TypeScheme, TypeVar,
+        TypeVarGenerator,
     },
     util::term,
 };
@@ -111,7 +111,7 @@ impl Interpreter {
         let inferred_ty = infer_statement(&ast, &mut self.type_env, &mut generator)?;
 
         match ast {
-            Statement::Let(name, term) => {
+            Statement::Let(name, term, _) => {
                 let resolved = resolve(&term, &self.env);
                 self.env.insert(
                     name,
@@ -119,7 +119,7 @@ impl Interpreter {
                 );
                 Ok(None)
             }
-            Statement::Expr(term) => {
+            Statement::Expr(term, _) => {
                 let resolved = resolve(&term, &self.env);
                 let result = normalize_with_limit(&resolved, self.step_limit, self.eval_mode)?;
                 self.env.insert("_".to_string(), result.clone());

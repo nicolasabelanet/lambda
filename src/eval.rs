@@ -58,7 +58,7 @@ pub fn resolve(term: &Term, env: &HashMap<String, Term>) -> Term {
 
 fn resolve_impl(term: &Term, env: &HashMap<String, Term>, bound: &mut HashSet<String>) -> Term {
     match term {
-        Term::Var(name) => {
+        Term::Var(name, _) => {
             if bound.contains(name) {
                 term.clone()
             } else if let Some(global) = env.get(name) {
@@ -68,18 +68,23 @@ fn resolve_impl(term: &Term, env: &HashMap<String, Term>, bound: &mut HashSet<St
                 term.clone()
             }
         }
-        Term::Lambda(param, t, body) => {
+        Term::Lambda(param, t, body, span) => {
             bound.insert(param.clone());
             let body = resolve_impl(body, env, bound);
             bound.remove(param);
-            Term::Lambda(param.clone(), t.clone(), Box::new(body))
+            Term::Lambda(param.clone(), t.clone(), Box::new(body), span.clone())
         }
-        Term::Application(left, right) => {
+        Term::Application(left, right, span) => {
             let left = resolve_impl(left, env, bound);
             let right = resolve_impl(right, env, bound);
-            Term::Application(Box::new(left), Box::new(right))
+            Term::Application(Box::new(left), Box::new(right), span.clone())
         }
-        Term::Let { name, value, body } => {
+        Term::Let {
+            name,
+            value,
+            body,
+            span,
+        } => {
             let value = resolve_impl(value, env, bound);
             bound.insert(name.clone());
             let body = resolve_impl(body, env, bound);
@@ -88,6 +93,7 @@ fn resolve_impl(term: &Term, env: &HashMap<String, Term>, bound: &mut HashSet<St
                 name: name.clone(),
                 value: Box::new(value),
                 body: Box::new(body),
+                span: span.clone(),
             }
         }
     }
@@ -132,50 +138,70 @@ pub fn normalize_with_limit(
 }
 
 fn is_value(term: &Term) -> bool {
-    matches!(term, Term::Var(_) | Term::Lambda(_, _, _))
+    matches!(term, Term::Var(_, _) | Term::Lambda(_, _, _, _))
 }
 
 fn step_cbn(term: &Term) -> Option<Term> {
     match term {
-        Term::Var(_) => None,
-        Term::Lambda(_, _, _) => None,
-        Term::Let { name, value, body } => Some(substitute(body, name, value)),
-        Term::Application(left, right) => match left.as_ref() {
-            Term::Lambda(param, _, body) => Some(substitute(body, param, right)),
-            _ => {
-                step_cbn(left).map(|new_left| Term::Application(Box::new(new_left), right.clone()))
+        Term::Var(_, _) => None,
+        Term::Lambda(_, _, _, _) => None,
+        Term::Let {
+            name,
+            value,
+            body,
+            span,
+        } => Some(substitute(body, name, value).with_span(span.clone())),
+        Term::Application(left, right, span) => match left.as_ref() {
+            Term::Lambda(param, _, body, _) => {
+                Some(substitute(body, param, right).with_span(span.clone()))
             }
+            _ => step_cbn(left)
+                .map(|new_left| Term::Application(Box::new(new_left), right.clone(), span.clone())),
         },
     }
 }
 
 fn step_cbv(term: &Term) -> Option<Term> {
     match term {
-        Term::Var(_) => None,
-        Term::Lambda(_, _, _) => None,
-        Term::Let { name, value, body } => {
+        Term::Var(_, _) => None,
+        Term::Lambda(_, _, _, _) => None,
+        Term::Let {
+            name,
+            value,
+            body,
+            span,
+        } => {
             if is_value(value) {
-                Some(substitute(body, name, value))
+                Some(substitute(body, name, value).with_span(span.clone()))
             } else {
                 step_cbv(value).map(|new_value| Term::Let {
                     name: name.clone(),
                     value: Box::new(new_value),
                     body: body.clone(),
+                    span: span.clone(),
                 })
             }
         }
-        Term::Application(left, right) => {
+        Term::Application(left, right, span) => {
             if let Some(new_left) = step_cbv(left) {
-                return Some(Term::Application(Box::new(new_left), right.clone()));
+                return Some(Term::Application(
+                    Box::new(new_left),
+                    right.clone(),
+                    span.clone(),
+                ));
             }
 
-            if let Term::Lambda(param, _, body) = left.as_ref() {
+            if let Term::Lambda(param, _, body, _) = left.as_ref() {
                 if let Some(new_right) = step(right, EvalMode::CallByValue) {
-                    return Some(Term::Application(left.clone(), Box::new(new_right)));
+                    return Some(Term::Application(
+                        left.clone(),
+                        Box::new(new_right),
+                        span.clone(),
+                    ));
                 }
 
                 if is_value(right) {
-                    return Some(substitute(body, param, right));
+                    return Some(substitute(body, param, right).with_span(span.clone()));
                 }
             }
 
@@ -194,36 +220,49 @@ fn step(term: &Term, eval_mode: EvalMode) -> Option<Term> {
 
 fn rename(term: &Term, old: &str, new: &str) -> Term {
     match term {
-        Term::Var(name) => {
+        Term::Var(name, span) => {
             if name == old {
-                Term::Var(new.to_string())
+                Term::Var(new.to_string(), span.clone())
             } else {
                 term.clone()
             }
         }
-        Term::Application(left, right) => Term::Application(
+        Term::Application(left, right, span) => Term::Application(
             Box::new(rename(left, old, new)),
             Box::new(rename(right, old, new)),
+            span.clone(),
         ),
-        Term::Lambda(param, t, body) => {
+        Term::Lambda(param, t, body, span) => {
             if param == old {
                 term.clone()
             } else {
-                Term::Lambda(param.clone(), t.clone(), Box::new(rename(body, old, new)))
+                Term::Lambda(
+                    param.clone(),
+                    t.clone(),
+                    Box::new(rename(body, old, new)),
+                    span.clone(),
+                )
             }
         }
-        Term::Let { name, value, body } => {
+        Term::Let {
+            name,
+            value,
+            body,
+            span,
+        } => {
             if name == old {
                 Term::Let {
                     name: name.clone(),
                     value: Box::new(rename(value, old, new)),
                     body: body.clone(),
+                    span: span.clone(),
                 }
             } else {
                 Term::Let {
                     name: name.clone(),
                     value: Box::new(rename(value, old, new)),
                     body: Box::new(rename(body, old, new)),
+                    span: span.clone(),
                 }
             }
         }
@@ -232,12 +271,13 @@ fn rename(term: &Term, old: &str, new: &str) -> Term {
 
 fn capture_avoiding_clone(term: &Term, avoid: &HashSet<String>) -> Term {
     match term {
-        Term::Var(_) => term.clone(),
-        Term::Application(left, right) => Term::Application(
+        Term::Var(_, _) => term.clone(),
+        Term::Application(left, right, span) => Term::Application(
             Box::new(capture_avoiding_clone(left, avoid)),
             Box::new(capture_avoiding_clone(right, avoid)),
+            span.clone(),
         ),
-        Term::Lambda(param, t, body) => {
+        Term::Lambda(param, t, body, span) => {
             if avoid.contains(param) {
                 let mut used = avoid.clone();
                 used.extend(free_vars(body));
@@ -249,6 +289,7 @@ fn capture_avoiding_clone(term: &Term, avoid: &HashSet<String>) -> Term {
                     fresh,
                     t.clone(),
                     Box::new(capture_avoiding_clone(&renamed_body, &next_avoid)),
+                    span.clone(),
                 )
             } else {
                 let mut next_avoid = avoid.clone();
@@ -257,10 +298,16 @@ fn capture_avoiding_clone(term: &Term, avoid: &HashSet<String>) -> Term {
                     param.clone(),
                     t.clone(),
                     Box::new(capture_avoiding_clone(body, &next_avoid)),
+                    span.clone(),
                 )
             }
         }
-        Term::Let { name, value, body } => {
+        Term::Let {
+            name,
+            value,
+            body,
+            span,
+        } => {
             let new_value = capture_avoiding_clone(value, avoid);
             if avoid.contains(name) {
                 let mut used = avoid.clone();
@@ -273,6 +320,7 @@ fn capture_avoiding_clone(term: &Term, avoid: &HashSet<String>) -> Term {
                     name: fresh,
                     value: Box::new(new_value),
                     body: Box::new(capture_avoiding_clone(&renamed_body, &next_avoid)),
+                    span: span.clone(),
                 }
             } else {
                 let mut next_avoid = avoid.clone();
@@ -281,17 +329,18 @@ fn capture_avoiding_clone(term: &Term, avoid: &HashSet<String>) -> Term {
                     name: name.clone(),
                     value: Box::new(new_value),
                     body: Box::new(capture_avoiding_clone(body, &next_avoid)),
+                    span: span.clone(),
                 }
             }
         }
     }
 }
 
-fn update_lambda(lambda: &Term, new: &str) -> (String, Option<Type>, Term) {
+fn update_lambda(lambda: &Term, new: &str) -> (String, Option<Type>, Term, crate::lexer::Span) {
     match lambda {
-        Term::Lambda(param, t, body) => {
+        Term::Lambda(param, t, body, span) => {
             let renamed_body = rename(body, param, new);
-            (new.to_string(), t.clone(), renamed_body)
+            (new.to_string(), t.clone(), renamed_body, span.clone())
         }
         _ => unreachable!("update_lambda called on non lambda"),
     }
@@ -315,18 +364,20 @@ fn create_fresh_name(base: &str, used: &HashSet<String>) -> String {
 
 fn free_vars(term: &Term) -> HashSet<String> {
     match term {
-        Term::Var(name) => HashSet::from([name.clone()]),
-        Term::Application(left, right) => {
+        Term::Var(name, _) => HashSet::from([name.clone()]),
+        Term::Application(left, right, _) => {
             let mut vars = free_vars(left);
             vars.extend(free_vars(right));
             vars
         }
-        Term::Lambda(name, _, body) => {
+        Term::Lambda(name, _, body, _) => {
             let mut body_vars = free_vars(body);
             body_vars.remove(name);
             body_vars
         }
-        Term::Let { name, value, body } => {
+        Term::Let {
+            name, value, body, ..
+        } => {
             let mut vars = free_vars(value);
             let mut body_vars = free_vars(body);
             body_vars.remove(name);
@@ -340,19 +391,19 @@ pub fn substitute(term: &Term, var: &str, replacement: &Term) -> Term {
     let free_replacement = free_vars(replacement);
 
     match term {
-        Term::Var(name) => {
+        Term::Var(name, _) => {
             if name == var {
                 replacement.clone()
             } else {
                 term.clone()
             }
         }
-        Term::Application(left, right) => {
+        Term::Application(left, right, span) => {
             let new_left = substitute(left, var, replacement);
             let new_right = substitute(right, var, replacement);
-            Term::Application(Box::new(new_left), Box::new(new_right))
+            Term::Application(Box::new(new_left), Box::new(new_right), span.clone())
         }
-        Term::Lambda(param, t, body) => {
+        Term::Lambda(param, t, body, span) => {
             let free_body = free_vars(body);
             if param == var || !free_body.contains(var) {
                 term.clone()
@@ -361,6 +412,7 @@ pub fn substitute(term: &Term, var: &str, replacement: &Term) -> Term {
                     param.clone(),
                     t.clone(),
                     Box::new(substitute(body, var, replacement)),
+                    span.clone(),
                 )
             } else {
                 let mut used = free_replacement;
@@ -368,21 +420,28 @@ pub fn substitute(term: &Term, var: &str, replacement: &Term) -> Term {
                 used.insert(param.clone());
                 used.insert(var.to_string());
                 let fresh_name = create_fresh_name(param, &used);
-                let (new_param, t, new_body) = update_lambda(term, &fresh_name);
+                let (new_param, t, new_body, lambda_span) = update_lambda(term, &fresh_name);
                 Term::Lambda(
                     new_param,
                     t.clone(),
                     Box::new(substitute(&new_body, var, replacement)),
+                    lambda_span,
                 )
             }
         }
-        Term::Let { name, value, body } => {
+        Term::Let {
+            name,
+            value,
+            body,
+            span,
+        } => {
             let new_value = substitute(value, var, replacement);
             if name == var {
                 Term::Let {
                     name: name.clone(),
                     value: Box::new(new_value),
                     body: body.clone(),
+                    span: span.clone(),
                 }
             } else if free_replacement.contains(name) {
                 let mut used = free_replacement;
@@ -395,12 +454,14 @@ pub fn substitute(term: &Term, var: &str, replacement: &Term) -> Term {
                     name: fresh_name.clone(),
                     value: Box::new(new_value),
                     body: Box::new(substitute(&renamed_body, var, replacement)),
+                    span: span.clone(),
                 }
             } else {
                 Term::Let {
                     name: name.clone(),
                     value: Box::new(new_value),
                     body: Box::new(substitute(body, var, replacement)),
+                    span: span.clone(),
                 }
             }
         }
@@ -416,12 +477,28 @@ mod tests {
             create_fresh_name, free_vars, normalize, rename, step, substitute, update_lambda,
             EvalError, EvalMode,
         },
-        lexer::lex,
+        lexer::{lex, Span},
         parser::{parse_term, Term},
     };
 
     fn term(input: &str) -> Term {
         parse_term(lex(input).unwrap()).unwrap()
+    }
+
+    fn span() -> Span {
+        Span { start: 0, end: 0 }
+    }
+
+    fn var(name: &str) -> Term {
+        Term::Var(name.into(), span())
+    }
+
+    fn lam(name: &str, body: Term) -> Term {
+        Term::Lambda(name.into(), None, Box::new(body), span())
+    }
+
+    fn app(left: Term, right: Term) -> Term {
+        Term::Application(Box::new(left), Box::new(right), span())
     }
 
     fn normalize_cbv(term: &Term) -> Result<Term, EvalError> {
@@ -549,6 +626,24 @@ mod tests {
                     Some(term("(\\x.z) w"))
                 );
             }
+
+            #[test]
+            fn test_step_preserves_redex_span_application() {
+                let input = term("(\\x.x) y");
+                let redex_span = input.span();
+                let reduced = step_cbv(&input).expect("expected a reduction");
+                assert_eq!(reduced.span().start, redex_span.start);
+                assert_eq!(reduced.span().end, redex_span.end);
+            }
+
+            #[test]
+            fn test_step_preserves_redex_span_let() {
+                let input = term("let x = y in z");
+                let redex_span = input.span();
+                let reduced = step_cbv(&input).expect("expected a reduction");
+                assert_eq!(reduced.span().start, redex_span.start);
+                assert_eq!(reduced.span().end, redex_span.end);
+            }
         }
     }
 
@@ -595,44 +690,12 @@ mod tests {
         #[test]
         fn test_simple() {
             assert_eq!(
-                update_lambda(
-                    &Term::Lambda(
-                        "y".into(),
-                        None,
-                        Box::new(Term::Application(
-                            Box::new(Term::Var("x".into())),
-                            Box::new(Term::Var("y".into()))
-                        ))
-                    ),
-                    "y1",
-                ),
-                (
-                    "y1".into(),
-                    None,
-                    Term::Application(
-                        Box::new(Term::Var("x".into())),
-                        Box::new(Term::Var("y1".into()))
-                    )
-                )
+                update_lambda(&lam("y", app(var("x"), var("y"))), "y1",),
+                ("y1".into(), None, app(var("x"), var("y1")), span(),)
             );
             assert_eq!(
-                update_lambda(
-                    &Term::Lambda(
-                        "y".into(),
-                        None,
-                        Box::new(Term::Lambda(
-                            "y".into(),
-                            None,
-                            Box::new(Term::Var("y".into()))
-                        ))
-                    ),
-                    "y1",
-                ),
-                (
-                    "y1".into(),
-                    None,
-                    Term::Lambda("y".into(), None, Box::new(Term::Var("y".into())))
-                ),
+                update_lambda(&lam("y", lam("y", var("y"))), "y1",),
+                ("y1".into(), None, lam("y", var("y")), span(),),
             );
         }
     }
@@ -643,48 +706,13 @@ mod tests {
         #[test]
         fn test_simple() {
             assert_eq!(
-                rename(
-                    &Term::Application(
-                        Box::new(Term::Var("x".into())),
-                        Box::new(Term::Var("y".into()))
-                    ),
-                    "y",
-                    "y1"
-                ),
-                Term::Application(
-                    Box::new(Term::Var("x".into())),
-                    Box::new(Term::Var("y1".into()))
-                )
+                rename(&app(var("x"), var("y")), "y", "y1"),
+                app(var("x"), var("y1"))
             );
+            assert_eq!(rename(&lam("y", var("y")), "y", "z"), lam("y", var("y")));
             assert_eq!(
-                rename(
-                    &Term::Lambda("y".into(), None, Box::new(Term::Var("y".into()))),
-                    "y",
-                    "z"
-                ),
-                Term::Lambda("y".into(), None, Box::new(Term::Var("y".into())))
-            );
-            assert_eq!(
-                rename(
-                    &Term::Lambda(
-                        "z".into(),
-                        None,
-                        Box::new(Term::Application(
-                            Box::new(Term::Var("y".into())),
-                            Box::new(Term::Var("z".into()))
-                        ))
-                    ),
-                    "y",
-                    "y1"
-                ),
-                Term::Lambda(
-                    "z".into(),
-                    None,
-                    Box::new(Term::Application(
-                        Box::new(Term::Var("y1".into())),
-                        Box::new(Term::Var("z".into()))
-                    ))
-                )
+                rename(&lam("z", app(var("y"), var("z"))), "y", "y1"),
+                lam("z", app(var("y1"), var("z")))
             );
         }
     }
@@ -936,44 +964,20 @@ mod tests {
 
         #[test]
         fn test_naive_substitution() {
+            assert_eq!(substitute(&var("x"), "x", &var("y")), var("y"));
+            assert_eq!(substitute(&var("z"), "x", &var("y")), var("z"));
             assert_eq!(
-                substitute(&Term::Var("x".into()), "x", &Term::Var("y".into())),
-                Term::Var("y".into())
+                substitute(&app(var("x"), var("z")), "x", &var("y")),
+                app(var("y"), var("z"))
             );
             assert_eq!(
-                substitute(&Term::Var("z".into()), "x", &Term::Var("y".into())),
-                Term::Var("z".into())
-            );
-            assert_eq!(
-                substitute(
-                    &Term::Application(
-                        Box::new(Term::Var("x".into())),
-                        Box::new(Term::Var("z".into())),
-                    ),
-                    "x",
-                    &Term::Var("y".into())
-                ),
-                Term::Application(
-                    Box::new(Term::Var("y".into())),
-                    Box::new(Term::Var("z".into())),
-                )
-            );
-            assert_eq!(
-                substitute(
-                    &Term::Lambda("z".into(), None, Box::new(Term::Var("x".into())),),
-                    "x",
-                    &Term::Var("y".into())
-                ),
-                Term::Lambda("z".into(), None, Box::new(Term::Var("y".into())),),
+                substitute(&lam("z", var("x")), "x", &var("y")),
+                lam("z", var("y"))
             );
 
             assert_eq!(
-                substitute(
-                    &Term::Lambda("x".into(), None, Box::new(Term::Var("x".into())),),
-                    "x",
-                    &Term::Var("y".into())
-                ),
-                Term::Lambda("x".into(), None, Box::new(Term::Var("x".into())),),
+                substitute(&lam("x", var("x")), "x", &var("y")),
+                lam("x", var("x"))
             );
         }
     }

@@ -3,7 +3,10 @@ use std::{
     fmt::Display,
 };
 
-use crate::parser::{Statement, Term};
+use crate::{
+    lexer::Span,
+    parser::{Statement, Term},
+};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum TypeError {
@@ -45,6 +48,7 @@ impl Display for TypeError {
 pub struct TypeMismatchContext {
     pub term: String,
     pub ty: Type,
+    pub span: Span,
 }
 
 impl TypeError {
@@ -64,6 +68,7 @@ impl TypeError {
                 context: Some(TypeMismatchContext {
                     term: term.to_string(),
                     ty: ty.clone(),
+                    span: term.span(),
                 }),
             },
             other => other,
@@ -306,14 +311,14 @@ pub fn infer(
     generator: &mut TypeVarGenerator,
 ) -> Result<(Subst, Type), TypeError> {
     match term {
-        Term::Var(name) => {
+        Term::Var(name, _) => {
             if let Some(mapped_scheme) = env.get(name) {
                 Ok((HashMap::new(), instantiate(mapped_scheme, generator)))
             } else {
                 Err(TypeError::UnboundVar(name.clone()))
             }
         }
-        Term::Lambda(param, param_ty, body) => {
+        Term::Lambda(param, param_ty, body, _) => {
             let param_ty = if let Some(inner) = param_ty {
                 inner.clone()
             } else {
@@ -341,7 +346,7 @@ pub fn infer(
             ))
         }
 
-        Term::Application(left, right) => {
+        Term::Application(left, right, _) => {
             // infer f
             let (s1, f_ty) = infer(left, env, generator)?;
             // infer a under env updated by s1
@@ -364,7 +369,7 @@ pub fn infer(
             let ret_ty = apply_subst_type(&ret_ty, &s);
             Ok((s, ret_ty))
         }
-        Term::Let { name, value, body } => {
+        Term::Let { name, value, body, .. } => {
             // infer value
             let (s1, v_ty) = infer(value, env, generator)?;
             // update env with s1 and generalize
@@ -387,21 +392,21 @@ pub fn infer(
 
 fn collect_free_vars(term: &Term, bound: &mut HashSet<String>, free: &mut HashSet<String>) {
     match term {
-        Term::Var(name) => {
+        Term::Var(name, _) => {
             if !bound.contains(name) {
                 free.insert(name.clone());
             }
         }
-        Term::Lambda(param, _, body) => {
+        Term::Lambda(param, _, body, _) => {
             bound.insert(param.clone());
             collect_free_vars(body, bound, free);
             bound.remove(param);
         }
-        Term::Application(left, right) => {
+        Term::Application(left, right, _) => {
             collect_free_vars(left, bound, free);
             collect_free_vars(right, bound, free);
         }
-        Term::Let { name, value, body } => {
+        Term::Let { name, value, body, .. } => {
             collect_free_vars(value, bound, free);
             bound.insert(name.clone());
             collect_free_vars(body, bound, free);
@@ -432,11 +437,11 @@ pub fn seed_free_vars_statement(
     let mut free = HashSet::new();
 
     match stmt {
-        Statement::Let(name, value) => {
+        Statement::Let(name, value, _) => {
             collect_free_vars(value, &mut bound, &mut free);
             free.remove(name);
         }
-        Statement::Expr(term) => collect_free_vars(term, &mut bound, &mut free),
+        Statement::Expr(term, _) => collect_free_vars(term, &mut bound, &mut free),
     }
 
     for name in free {
@@ -453,7 +458,7 @@ pub fn infer_statement(
     generator: &mut TypeVarGenerator,
 ) -> Result<Option<Type>, TypeError> {
     match stmt {
-        Statement::Let(name, value) => {
+        Statement::Let(name, value, _) => {
             let (subst, ty) = infer(value, env, generator)?;
             let env1 = apply_subst_env(env, &subst);
             let ty = apply_subst_type(&ty, &subst);
@@ -462,7 +467,7 @@ pub fn infer_statement(
             env.insert(name.clone(), scheme);
             Ok(None)
         }
-        Statement::Expr(term) => {
+        Statement::Expr(term, _) => {
             let (subst, ty) = infer(term, env, generator)?;
             let ty = apply_subst_type(&ty, &subst);
             Ok(Some(ty))
@@ -473,6 +478,32 @@ pub fn infer_statement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{lexer::lex, parser::parse_term};
+
+    fn span() -> Span {
+        Span { start: 0, end: 0 }
+    }
+
+    fn var(name: &str) -> Term {
+        Term::Var(name.into(), span())
+    }
+
+    fn lam(name: &str, body: Term) -> Term {
+        Term::Lambda(name.into(), None, Box::new(body), span())
+    }
+
+    fn app(left: Term, right: Term) -> Term {
+        Term::Application(Box::new(left), Box::new(right), span())
+    }
+
+    fn let_term(name: &str, value: Term, body: Term) -> Term {
+        Term::Let {
+            name: name.into(),
+            value: Box::new(value),
+            body: Box::new(body),
+            span: span(),
+        }
+    }
 
     #[test]
     fn test_free_type_vars_type() {
@@ -696,7 +727,7 @@ mod tests {
 
     #[test]
     fn test_infer_identity_lambda() {
-        let term = Term::Lambda("x".into(), None, Box::new(Term::Var("x".into())));
+        let term = lam("x", var("x"));
         let env: TypeEnv = HashMap::new();
         let mut generator = TypeVarGenerator::new();
 
@@ -713,18 +744,7 @@ mod tests {
 
     #[test]
     fn test_infer_composition_shape() {
-        let term = Term::Lambda(
-            "f".into(),
-            None,
-            Box::new(Term::Lambda(
-                "x".into(),
-                None,
-                Box::new(Term::Application(
-                    Box::new(Term::Var("f".into())),
-                    Box::new(Term::Var("x".into())),
-                )),
-            )),
-        );
+        let term = lam("f", lam("x", app(var("f"), var("x"))));
         let env: TypeEnv = HashMap::new();
         let mut generator = TypeVarGenerator::new();
 
@@ -744,18 +764,7 @@ mod tests {
 
     #[test]
     fn test_infer_let_polymorphism() {
-        let term = Term::Let {
-            name: "id".into(),
-            value: Box::new(Term::Lambda(
-                "x".into(),
-                None,
-                Box::new(Term::Var("x".into())),
-            )),
-            body: Box::new(Term::Application(
-                Box::new(Term::Var("id".into())),
-                Box::new(Term::Var("id".into())),
-            )),
-        };
+        let term = let_term("id", lam("x", var("x")), app(var("id"), var("id")));
         let env: TypeEnv = HashMap::new();
         let mut generator = TypeVarGenerator::new();
 
@@ -771,18 +780,34 @@ mod tests {
 
     #[test]
     fn test_infer_occurs_check_error() {
-        let term = Term::Lambda(
-            "x".into(),
-            None,
-            Box::new(Term::Application(
-                Box::new(Term::Var("x".into())),
-                Box::new(Term::Var("x".into())),
-            )),
-        );
+        let term = lam("x", app(var("x"), var("x")));
         let env: TypeEnv = HashMap::new();
         let mut generator = TypeVarGenerator::new();
 
         let err = infer(&term, &env, &mut generator).unwrap_err();
         assert!(matches!(err, TypeError::OccursCheckFailed { .. }));
+    }
+
+    #[test]
+    fn test_type_mismatch_span_points_to_argument() {
+        let term = parse_term(lex("(\\x: A. x) (\\y: B. y)").unwrap()).unwrap();
+        let arg_span = match &term {
+            Term::Application(_, right, _) => right.span(),
+            _ => panic!("expected application"),
+        };
+        let env: TypeEnv = HashMap::new();
+        let mut generator = TypeVarGenerator::new();
+
+        let err = infer(&term, &env, &mut generator).unwrap_err();
+        match err {
+            TypeError::TypeMismatch {
+                context: Some(ctx),
+                ..
+            } => {
+                assert_eq!(ctx.span.start, arg_span.start);
+                assert_eq!(ctx.span.end, arg_span.end);
+            }
+            _ => panic!("expected type mismatch with context"),
+        }
     }
 }

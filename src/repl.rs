@@ -69,15 +69,7 @@ fn format_eval_error(source: &str, err: EvalError) -> String {
                     context: Some(ctx),
                 } => {
                     let message = format!("type mismatch: expected {expected}, found {found}");
-                    if let Some((start, end)) = find_term_span(source, &ctx.term) {
-                        (message, Span { start, end })
-                    } else {
-                        let span = Span {
-                            start: 0,
-                            end: source.chars().count().max(1),
-                        };
-                        (message, span)
-                    }
+                    (message, ctx.span)
                 }
                 other => {
                     let span = Span {
@@ -92,21 +84,6 @@ fn format_eval_error(source: &str, err: EvalError) -> String {
         }
         _ => format!("error: {err}"),
     }
-}
-
-fn find_term_span(source: &str, term: &str) -> Option<(usize, usize)> {
-    if let Some(span) = find_span_for_substring(source, &format!("({term})")) {
-        return Some(span);
-    }
-
-    find_span_for_substring(source, term)
-}
-
-fn find_span_for_substring(source: &str, needle: &str) -> Option<(usize, usize)> {
-    let byte_start = source.find(needle)?;
-    let start = source[..byte_start].chars().count();
-    let end = start + needle.chars().count();
-    Some((start, end.max(start + 1)))
 }
 
 #[cfg(test)]
